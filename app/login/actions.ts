@@ -3,12 +3,11 @@
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
-import { createAdminSupabaseClient } from "@/lib/supabase/admin";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 
 const loginSchema = z.object({
-  identifier: z.string().trim().min(3, "Informe seu e-mail ou nome de usuario."),
-  password: z.string().min(6, "Informe sua senha com pelo menos 6 caracteres."),
+  email: z.string().trim().email("Informe um e-mail valido."),
+  password: z.string().min(1, "Informe sua senha."),
 });
 
 const signUpSchema = z.object({
@@ -25,7 +24,7 @@ const signUpSchema = z.object({
 
 export async function signInWithPasswordAction(formData: FormData) {
   const parsed = loginSchema.safeParse({
-    identifier: formData.get("identifier"),
+    email: formData.get("email"),
     password: formData.get("password"),
   });
 
@@ -39,29 +38,8 @@ export async function signInWithPasswordAction(formData: FormData) {
     return { ok: false, message: "Configure as variaveis do Supabase para ativar a autenticacao." };
   }
 
-  const resolvedLogin = await resolveLoginEmail(parsed.data.identifier);
-
-  if (!resolvedLogin.email) {
-    if (resolvedLogin.reason === "profiles_table_missing") {
-      return {
-        ok: false,
-        message:
-          "O login por usuario ainda nao esta pronto neste projeto Supabase. Aplique as migrations da pasta supabase/migrations e tente novamente.",
-      };
-    }
-
-    if (!parsed.data.identifier.includes("@") && !createAdminSupabaseClient()) {
-      return {
-        ok: false,
-        message: "Para login por usuario, adicione SUPABASE_SERVICE_ROLE_KEY no .env.local. O login por e-mail ja funciona.",
-      };
-    }
-
-    return { ok: false, message: "Nao foi possivel entrar. Confira usuario/e-mail e senha." };
-  }
-
   const { error } = await supabase.auth.signInWithPassword({
-    email: resolvedLogin.email,
+    email: parsed.data.email,
     password: parsed.data.password,
   });
 
@@ -74,51 +52,15 @@ export async function signInWithPasswordAction(formData: FormData) {
       };
     }
 
-    return { ok: false, message: "Nao foi possivel entrar. Confira usuario/e-mail e senha." };
+    if (isInvalidLoginError(error.message)) {
+      return { ok: false, message: "Senha incorreta. Tente novamente." };
+    }
+
+    return { ok: false, message: "Nao foi possivel entrar agora. Tente novamente." };
   }
 
   revalidatePath("/", "layout");
   return { ok: true, message: "Login realizado com sucesso." };
-}
-
-async function resolveLoginEmail(identifier: string): Promise<{
-  email: string | null;
-  reason: "ok" | "invalid_email" | "not_found" | "profiles_table_missing" | "query_failed";
-}> {
-  const normalized = identifier.trim().toLowerCase();
-
-  if (normalized.includes("@")) {
-    const parsed = z.string().email().safeParse(normalized);
-    return {
-      email: parsed.success ? parsed.data : null,
-      reason: parsed.success ? "ok" : "invalid_email",
-    };
-  }
-
-  const adminSupabase = createAdminSupabaseClient();
-  if (!adminSupabase) {
-    return { email: null, reason: "query_failed" };
-  }
-
-  const { data, error } = await adminSupabase
-    .from("profiles")
-    .select("email")
-    .eq("username", normalized)
-    .maybeSingle();
-
-  if (error) {
-    if (error.message.toLowerCase().includes("could not find the table")) {
-      return { email: null, reason: "profiles_table_missing" };
-    }
-
-    return { email: null, reason: "query_failed" };
-  }
-
-  if (!data?.email) {
-    return { email: null, reason: "not_found" };
-  }
-
-  return { email: data.email, reason: "ok" };
 }
 
 export async function signUpWithPasswordAction(formData: FormData) {
@@ -193,4 +135,9 @@ export async function signUpWithPasswordAction(formData: FormData) {
 function isEmailNotConfirmedError(message: string) {
   const normalized = message.toLowerCase();
   return normalized.includes("email not confirmed") || normalized.includes("email_not_confirmed");
+}
+
+function isInvalidLoginError(message: string) {
+  const normalized = message.toLowerCase();
+  return normalized.includes("invalid login credentials") || normalized.includes("invalid_credentials");
 }

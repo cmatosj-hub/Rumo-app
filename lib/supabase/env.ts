@@ -23,3 +23,7 @@ export function getSupabaseAdminEnv() {
 export function hasSupabaseEnv() {
   return Boolean(getSupabaseEnv());
 }
+
+export function hasSupabaseAdminEnv() {
+  return Boolean(getSupabaseAdminEnv());
+}
