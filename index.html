@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RUMO</title>
+    <link rel="stylesheet" href="rumo.css">
+    <script>
+        const theme = localStorage.getItem('theme');
+        if (theme === 'light') document.documentElement.classList.add('light-mode');
+    </script>
+</head>
+<body>
+    <button class="theme-toggle" onclick="toggleTema()" id="themeBtn">Light Mode</button>
+    <div class="container">
+        <h1 style="margin-top: 80px;">RUMO</h1>
+        <div style="display: flex; flex-direction: column; gap: 15px; max-width: 350px; margin: 0 auto;">
+            <a href="ganhos.html" class="nav-btn btn-secondary">Registrar Ganhos</a>
+            <a href="painel.html" class="nav-btn btn-primary">Painel de Metas</a>
+            <a href="historico.html" class="nav-btn btn-secondary">Histórico</a>
+        </div>
+    </div>
+    <script>
+        function toggleTema() {
+            const isLight = document.body.classList.toggle('light-mode');
+            localStorage.setItem('theme', isLight ? 'light' : 'dark');
+            document.getElementById('themeBtn').innerText = isLight ? 'Dark Mode' : 'Light Mode';
+        }
+        document.body.className = localStorage.getItem('theme') === 'light' ? 'light-mode' : '';
+    </script>
+</body>
+</html>

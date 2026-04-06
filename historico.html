@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RUMO • Histórico</title>
+    <link rel="stylesheet" href="rumo.css">
+</head>
+<body>
+    <button class="theme-toggle" onclick="toggleTema()" id="themeBtn">Light Mode</button>
+    <div class="container">
+        <h1>Histórico Geral</h1>
+        <div class="card" id="hist-lista" style="padding: 0;"></div>
+        <div class="nav-footer">
+            <a href="index.html" class="nav-btn btn-secondary">Voltar</a>
+        </div>
+    </div>
+    <script>
+        function toggleTema() {
+            document.body.classList.toggle('light-mode');
+            const isLight = document.body.classList.contains('light-mode');
+            localStorage.setItem('theme', isLight ? 'light' : 'dark');
+            document.getElementById('themeBtn').innerText = isLight ? 'Dark Mode' : 'Light Mode';
+        }
+        if(localStorage.getItem('theme') === 'light') { document.body.classList.add('light-mode'); document.getElementById('themeBtn').innerText = 'Dark Mode'; }
+
+        fetch("/historico-geral").then(r => r.json()).then(dados => {
+            let html = "";
+            dados.forEach(d => {
+                let dataF = d.data.split('-').reverse().join('/');
+                html += `<div style="display:flex; justify-content:space-between; padding:15px; border-bottom:1px solid rgba(255,255,255,0.1)">
+                    <div><b>${dataF}</b><br><small style="color:var(--text-dim)">U: ${d.uber} | 9: ${d.p99}</small></div>
+                    <div style="font-weight:bold; color:var(--success)">R$ ${d.valor.toFixed(2)}</div>
+                </div>`;
+            });
+            document.getElementById("hist-lista").innerHTML = html || "<p style='padding:20px'>Nenhum dado.</p>";
+        });
+    </script>
+</body>
+</html>
