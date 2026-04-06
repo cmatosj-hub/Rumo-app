@@ -2,7 +2,6 @@ import { UserCircle2 } from "lucide-react";
 
 import { AccountClient } from "@/components/account/account-client";
 import { SidebarShell } from "@/components/layout/sidebar-shell";
-import { AuthHint } from "@/components/shared/auth-hint";
 import { getAccountPageData } from "@/lib/data/app";
 
 export default async function AccountPage() {
@@ -23,7 +22,6 @@ export default async function AccountPage() {
       </div>
 
       <div className="mt-8 space-y-8">
-        <AuthHint authRequired={data.authRequired} isDemoMode={data.isDemoMode} />
         <AccountClient profile={data.profile} />
       </div>
     </SidebarShell>

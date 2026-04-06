@@ -6,7 +6,6 @@ import { ArrowRight, Coins, Fuel, Goal, Route, Timer } from "lucide-react";
 import { useMemo } from "react";
 
 import { useDriverJournal } from "@/components/driver-journal/use-driver-journal";
-import { AuthHint } from "@/components/shared/auth-hint";
 import { Card, CardContent } from "@/components/ui/card";
 import { computeProjectedTarget } from "@/lib/rumo-engine";
 import type { DashboardData } from "@/lib/types";
@@ -164,7 +163,6 @@ export function DashboardClient({ data }: { data: DashboardData }) {
         </CardContent>
       </Card>
 
-      <AuthHint authRequired={data.authRequired} isDemoMode={data.isDemoMode} />
     </div>
   );
 }

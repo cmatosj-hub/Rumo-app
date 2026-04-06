@@ -4,7 +4,6 @@ import { BarChart3, Fuel, Timer, TrendingUp } from "lucide-react";
 import { useMemo } from "react";
 
 import { useDriverJournal } from "@/components/driver-journal/use-driver-journal";
-import { AuthHint } from "@/components/shared/auth-hint";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { formatWorkedHours, type DailyClosureRecord } from "@/lib/driver-journal";
@@ -86,8 +85,6 @@ export function ReportsClient({ data }: { data: DashboardData }) {
       </div>
 
       <div className="mt-8 space-y-8">
-        <AuthHint authRequired={data.authRequired} isDemoMode={data.isDemoMode} />
-
         <section className="grid gap-4 xl:grid-cols-4">
           <MetricCard title="Lucro por semana" value={money.format(totals.weekly)} icon={TrendingUp} />
           <MetricCard title="Lucro por mes" value={money.format(totals.monthly)} icon={BarChart3} />

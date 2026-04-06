@@ -53,14 +53,10 @@ export type SettingsPageData = {
     dailyBreakEven: number;
     weeklyTarget: number;
   };
-  authRequired: boolean;
-  isDemoMode: boolean;
 };
 
 export type DashboardData = {
-  authRequired: boolean;
-  isDemoMode: boolean;
-  profile: ProfileRecord | null;
+  profile: ProfileRecord;
   settings: SettingsRecord;
   wallets: Wallet[];
   transactions: Transaction[];
@@ -79,7 +75,5 @@ export type DashboardData = {
 };
 
 export type AccountPageData = {
-  authRequired: boolean;
-  isDemoMode: boolean;
   profile: ProfileRecord;
 };

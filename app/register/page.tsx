@@ -1,11 +1,24 @@
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import { ArrowRight, UserPlus } from "lucide-react";
 
 import { RegisterForm } from "@/components/auth/register-form";
 import { hasSupabaseEnv } from "@/lib/supabase/env";
+import { createServerSupabaseClient } from "@/lib/supabase/server";
 
-export default function RegisterPage() {
+export default async function RegisterPage() {
   const envReady = hasSupabaseEnv();
+  const supabase = await createServerSupabaseClient();
+
+  if (supabase) {
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+
+    if (user) {
+      redirect("/dashboard");
+    }
+  }
 
   return (
     <main className="mx-auto min-h-screen max-w-6xl px-6 py-10">

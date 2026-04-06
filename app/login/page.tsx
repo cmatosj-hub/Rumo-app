@@ -1,8 +1,22 @@
+import { redirect } from "next/navigation";
+
 import { LoginForm } from "@/components/auth/login-form";
 import { hasSupabaseAdminEnv, hasSupabaseEnv } from "@/lib/supabase/env";
+import { createServerSupabaseClient } from "@/lib/supabase/server";
 
-export default function LoginPage() {
+export default async function LoginPage() {
   const envReady = hasSupabaseEnv() && hasSupabaseAdminEnv();
+  const supabase = await createServerSupabaseClient();
+
+  if (supabase) {
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+
+    if (user) {
+      redirect("/dashboard");
+    }
+  }
 
   return (
     <main className="mx-auto flex min-h-screen max-w-6xl items-center justify-center px-6 py-6 lg:py-10">

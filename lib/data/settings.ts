@@ -1,8 +1,9 @@
+import type { AuthenticatedSessionContext } from "@/lib/auth/server";
+import { getAuthenticatedSessionContext, requireAuthenticatedSession } from "@/lib/auth/server";
 import { computeWeeklyTarget } from "@/lib/rumo-engine";
-import { createServerSupabaseClient } from "@/lib/supabase/server";
 import type { Creditor, SettingsPageData } from "@/lib/types";
 
-const demoSettings = {
+const defaultSettings = {
   metaDiaria: 350,
   diasTrabalhoSemana: 6,
   porcentagemOperacional: 30,
@@ -10,48 +11,25 @@ const demoSettings = {
   porcentagemPessoal: 50,
 };
 
-const demoCreditors: Creditor[] = [
-  {
-    id: "demo-1",
-    nome: "Aluguel do carro",
-    valorMensal: 2100,
-    diaVencimento: 5,
-    status: "ativo",
-  },
-  {
-    id: "demo-2",
-    nome: "Plano de internet",
-    valorMensal: 89.9,
-    diaVencimento: 12,
-    status: "ativo",
-  },
-];
-
 export async function getSettingsPageData(): Promise<SettingsPageData> {
-  const supabase = await createServerSupabaseClient();
+  const context = await requireAuthenticatedSession();
+  return buildSettingsPageData(context);
+}
 
-  if (!supabase) {
-    return buildPayload({
-      settings: demoSettings,
-      creditors: demoCreditors,
-      authRequired: false,
-      isDemoMode: true,
-    });
+export async function getSettingsPageDataIfAuthenticated(): Promise<SettingsPageData | null> {
+  const context = await getAuthenticatedSessionContext();
+
+  if (!context) {
+    return null;
   }
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  return buildSettingsPageData(context);
+}
 
-  if (!user) {
-    return buildPayload({
-      settings: demoSettings,
-      creditors: [],
-      authRequired: true,
-      isDemoMode: false,
-    });
-  }
-
+async function buildSettingsPageData({
+  supabase,
+  user,
+}: AuthenticatedSessionContext): Promise<SettingsPageData> {
   const [{ data: settings }, { data: creditors }] = await Promise.all([
     supabase
       .from("settings")
@@ -77,7 +55,7 @@ export async function getSettingsPageData(): Promise<SettingsPageData> {
           porcentagemEmergencia: Number(settings.porcentagem_emergencia),
           porcentagemPessoal: Number(settings.porcentagem_pessoal),
         }
-      : demoSettings,
+      : defaultSettings,
     creditors:
       creditors?.map((creditor) => ({
         id: creditor.id,
@@ -86,21 +64,15 @@ export async function getSettingsPageData(): Promise<SettingsPageData> {
         diaVencimento: creditor.dia_vencimento,
         status: creditor.status as Creditor["status"],
       })) ?? [],
-    authRequired: false,
-    isDemoMode: false,
   });
 }
 
 function buildPayload({
   settings,
   creditors,
-  authRequired,
-  isDemoMode,
 }: {
   settings: SettingsPageData["settings"];
   creditors: Creditor[];
-  authRequired: boolean;
-  isDemoMode: boolean;
 }): SettingsPageData {
   const activeCreditors = creditors.filter((creditor) => creditor.status === "ativo");
   const monthlyFixedCost = activeCreditors.reduce((total, creditor) => total + creditor.valorMensal, 0);
@@ -114,7 +86,5 @@ function buildPayload({
       dailyBreakEven: monthlyFixedCost / 30,
       weeklyTarget: computeWeeklyTarget(settings.metaDiaria, settings.diasTrabalhoSemana),
     },
-    authRequired,
-    isDemoMode,
   };
 }

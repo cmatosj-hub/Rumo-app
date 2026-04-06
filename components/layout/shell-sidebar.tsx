@@ -1,12 +1,10 @@
 "use client";
 
-import type React from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   CarFront,
   ChartNoAxesCombined,
-  LogIn,
   ReceiptText,
   ScrollText,
   Settings,
@@ -22,12 +20,8 @@ import { cn } from "@/lib/utils";
 
 export function ShellSidebar({
   profile,
-  authRequired,
-  isDemoMode,
 }: {
-  profile: ProfileRecord | null;
-  authRequired: boolean;
-  isDemoMode: boolean;
+  profile: ProfileRecord;
 }) {
   const pathname = usePathname();
   const nav = [
@@ -80,41 +74,37 @@ export function ShellSidebar({
           <AvatarBubble profile={profile} />
           <div className="min-w-0">
             <p className="truncate font-semibold text-[var(--color-foreground)]">
-              {profile?.fullName || profile?.username || "Visitante"}
+              {profile.fullName || profile.username}
             </p>
             <p className="truncate text-sm text-[var(--color-muted-foreground)]">
-              {profile?.email || (authRequired ? "Faca login para salvar seus dados" : "Modo demonstracao")}
+              {profile.email}
             </p>
           </div>
         </div>
 
         <div className="mt-4 flex flex-wrap gap-2">
-          {authRequired ? (
-            <Link href="/login" className="flex-1">
-              <Button className="w-full">
-                <LogIn className="mr-2 h-4 w-4" />
-                Entrar
-              </Button>
-            </Link>
-          ) : (
-            <>
-              <Link href="/account" className="flex-1">
-                <Button variant="secondary" className="w-full">
-                  <UserCircle2 className="mr-2 h-4 w-4" />
-                  Conta
-                </Button>
-              </Link>
-              <form action={signOutAction} className="flex-1">
-                <Button type="submit" variant="ghost" className="w-full">
-                  Sair
-                </Button>
-              </form>
-            </>
-          )}
+          <Link href="/account" className="flex-1">
+            <Button variant="secondary" className="w-full">
+              <UserCircle2 className="mr-2 h-4 w-4" />
+              Conta
+            </Button>
+          </Link>
+          <form action={signOutAction} className="flex-1">
+            <Button type="submit" variant="ghost" className="w-full">
+              Sair
+            </Button>
+          </form>
         </div>
 
+        <form action={signOutAction} className="mt-3">
+          <input type="hidden" name="mode" value="switch-account" />
+          <Button type="submit" variant="ghost" className="w-full">
+            Trocar conta
+          </Button>
+        </form>
+
         <div className="theme-border mt-4 flex items-center justify-between rounded-2xl border px-3 py-2 text-xs uppercase tracking-[0.16em] text-[var(--color-muted-foreground)]">
-          <span>{isDemoMode ? "Demo" : "Online"}</span>
+          <span>Online</span>
           <Settings className="h-4 w-4" />
         </div>
       </div>
@@ -122,8 +112,8 @@ export function ShellSidebar({
   );
 }
 
-function AvatarBubble({ profile }: { profile: ProfileRecord | null }) {
-  if (profile?.avatarUrl) {
+function AvatarBubble({ profile }: { profile: ProfileRecord }) {
+  if (profile.avatarUrl) {
     return (
       <img
         src={profile.avatarUrl}
@@ -133,7 +123,7 @@ function AvatarBubble({ profile }: { profile: ProfileRecord | null }) {
     );
   }
 
-  const initials = (profile?.fullName || profile?.username || "RU")
+  const initials = (profile.fullName || profile.username || "RU")
     .split(" ")
     .map((part) => part[0])
     .join("")

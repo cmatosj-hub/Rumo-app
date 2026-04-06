@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import type React from "react";
 import { IBM_Plex_Mono, Manrope } from "next/font/google";
 
+import { AuthSessionProvider } from "@/components/providers/auth-session-provider";
 import { QueryProvider } from "@/components/providers/query-provider";
 import { ThemeProvider } from "@/components/providers/theme-provider";
 
@@ -32,7 +33,9 @@ export default function RootLayout({
     <html lang="pt-BR" data-theme="dark" style={{ colorScheme: "dark" }} suppressHydrationWarning>
       <body className={`${manrope.variable} ${plexMono.variable} font-sans antialiased`}>
         <ThemeProvider>
-          <QueryProvider>{children}</QueryProvider>
+          <AuthSessionProvider>
+            <QueryProvider>{children}</QueryProvider>
+          </AuthSessionProvider>
         </ThemeProvider>
       </body>
     </html>

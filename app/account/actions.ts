@@ -84,12 +84,13 @@ export async function updatePasswordAction(input: z.infer<typeof passwordSchema>
   return { ok: true, message: "Senha atualizada." };
 }
 
-export async function signOutAction() {
+export async function signOutAction(formData?: FormData) {
   const supabase = await createServerSupabaseClient();
+  const redirectTarget = formData?.get("mode") === "switch-account" ? "/login?clear=1" : "/login";
 
   if (supabase) {
     await supabase.auth.signOut();
   }
 
-  redirect("/login");
+  redirect(redirectTarget);
 }

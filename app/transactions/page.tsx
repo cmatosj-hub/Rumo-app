@@ -3,7 +3,6 @@ import { ReceiptText } from "lucide-react";
 
 import { SidebarShell } from "@/components/layout/sidebar-shell";
 import { CloseDayClient } from "@/components/transactions/close-day-client";
-import { AuthHint } from "@/components/shared/auth-hint";
 import { getDashboardData } from "@/lib/data/app";
 
 export default async function TransactionsPage() {
@@ -33,7 +32,6 @@ export default async function TransactionsPage() {
       </div>
 
       <div className="mt-8 space-y-8">
-        <AuthHint authRequired={data.authRequired} isDemoMode={data.isDemoMode} />
         <CloseDayClient settings={data.settings} wallets={data.wallets} />
       </div>
     </SidebarShell>

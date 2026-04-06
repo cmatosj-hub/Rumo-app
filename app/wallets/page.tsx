@@ -1,7 +1,6 @@
 import { WalletCards } from "lucide-react";
 
 import { SidebarShell } from "@/components/layout/sidebar-shell";
-import { AuthHint } from "@/components/shared/auth-hint";
 import { WalletsClient } from "@/components/wallets/wallets-client";
 import { getDashboardData } from "@/lib/data/app";
 
@@ -23,7 +22,6 @@ export default async function WalletsPage() {
       </div>
 
       <div className="mt-8 space-y-8">
-        <AuthHint authRequired={data.authRequired} isDemoMode={data.isDemoMode} />
         <WalletsClient wallets={data.wallets} />
       </div>
     </SidebarShell>

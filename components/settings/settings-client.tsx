@@ -3,7 +3,8 @@
 import type React from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { PiggyBank, ShieldCheck, TrendingUp } from "lucide-react";
-import { useMemo, useState, useTransition } from "react";
+import { useEffect, useMemo, useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
 
 import {
   addCreditorAction,
@@ -18,11 +19,28 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import type { SettingsPageData } from "@/lib/types";
 
+class AuthSessionError extends Error {
+  status: number;
+
+  constructor(message: string, status = 401) {
+    super(message);
+    this.name = "AuthSessionError";
+    this.status = status;
+  }
+}
+
 async function fetchSettingsOverview(): Promise<SettingsPageData> {
   const response = await fetch("/api/settings", { cache: "no-store" });
+
+  if (response.status === 401) {
+    const payload = (await response.json().catch(() => null)) as { message?: string } | null;
+    throw new AuthSessionError(payload?.message ?? "Nao foi possivel validar sua sessao. Faca login novamente.");
+  }
+
   if (!response.ok) {
     throw new Error("Falha ao carregar configuracoes.");
   }
+
   return response.json();
 }
 
@@ -32,14 +50,31 @@ const currencyFormatter = new Intl.NumberFormat("pt-BR", {
 });
 
 export function SettingsClient() {
+  const router = useRouter();
   const queryClient = useQueryClient();
-  const { data, isLoading, isError } = useQuery({
+  const { data, error, isLoading, isError } = useQuery({
     queryKey: ["settings-overview"],
     queryFn: fetchSettingsOverview,
   });
 
+  const isAuthError = error instanceof AuthSessionError;
+
+  useEffect(() => {
+    if (isAuthError) {
+      router.replace("/login?reason=expired");
+    }
+  }, [isAuthError, router]);
+
   if (isLoading) {
     return <div className="mt-8 text-[var(--color-muted-foreground)]">Carregando configuracoes...</div>;
+  }
+
+  if (isAuthError) {
+    return (
+      <div className="mt-8 rounded-3xl border border-amber-400/20 bg-amber-400/10 p-6 text-[var(--color-foreground)]">
+        Nao foi possivel validar sua sessao. Faca login novamente.
+      </div>
+    );
   }
 
   if (isError || !data) {
@@ -106,19 +141,6 @@ function SettingsClientContent({
           icon={TrendingUp}
         />
       </section>
-
-      {data.authRequired ? (
-        <div className="accent-amber-surface rounded-3xl border p-5 text-sm leading-6">
-          Faca login em <a className="font-semibold underline" href="/login">/login</a> para persistir os dados no Supabase.
-        </div>
-      ) : null}
-
-      {data.isDemoMode ? (
-        <div className="accent-sky-surface rounded-3xl border p-5 text-sm leading-6">
-          Projeto em modo de demonstracao. O schema e a interface ja estao prontos, mas o salvamento depende das variaveis do Supabase.
-        </div>
-      ) : null}
-
       {statusMessage ? (
         <div className="accent-emerald-surface rounded-3xl border p-4 text-sm">
           {statusMessage}

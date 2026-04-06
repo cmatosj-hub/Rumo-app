@@ -2,7 +2,6 @@ import { Landmark, WalletMinimal } from "lucide-react";
 import Link from "next/link";
 
 import { SidebarShell } from "@/components/layout/sidebar-shell";
-import { AuthHint } from "@/components/shared/auth-hint";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { getSettingsPageData } from "@/lib/data/settings";
@@ -27,8 +26,6 @@ export default async function ContasPage() {
       </div>
 
       <div className="mt-8 space-y-8">
-        <AuthHint authRequired={data.authRequired} isDemoMode={data.isDemoMode} />
-
         <div className="grid gap-6 xl:grid-cols-[0.85fr_1.15fr]">
           <Card>
             <CardHeader>

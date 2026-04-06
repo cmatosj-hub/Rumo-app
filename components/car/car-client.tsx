@@ -4,7 +4,6 @@ import { CarFront, Fuel, Gauge, Wrench } from "lucide-react";
 import { useMemo } from "react";
 
 import { useDriverJournal } from "@/components/driver-journal/use-driver-journal";
-import { AuthHint } from "@/components/shared/auth-hint";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import type { DashboardData } from "@/lib/types";
@@ -45,8 +44,6 @@ export function CarClient({ data }: { data: DashboardData }) {
       </div>
 
       <div className="mt-8 space-y-8">
-        <AuthHint authRequired={data.authRequired} isDemoMode={data.isDemoMode} />
-
         <section className="grid gap-4 xl:grid-cols-4">
           <MetricCard title="KM atual do carro" value={summary.currentKm ? `${summary.currentKm} km` : "--"} icon={Gauge} />
           <MetricCard
