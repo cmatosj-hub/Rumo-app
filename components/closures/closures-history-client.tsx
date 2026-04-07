@@ -44,6 +44,7 @@ export function ClosuresHistoryClient() {
     }
 
     updateStore({
+      activeJourney: store.activeJourney,
       closures: store.closures.filter((item) => item.id !== closure.id),
       fuelEntries: store.fuelEntries.filter((entry) => entry.date !== closure.date),
       maintenanceEntries: store.maintenanceEntries.filter((entry) => entry.date !== closure.date),

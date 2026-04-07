@@ -236,6 +236,40 @@ select {
   background: rgb(52 211 153 / 0.18);
 }
 
+.shell-layout {
+  display: grid;
+  gap: 1rem;
+}
+
+.shell-sidebar-rail {
+  display: none;
+}
+
+.shell-mobile-entry {
+  display: flex;
+  align-items: center;
+}
+
+.shell-mobile-layer {
+  display: block;
+}
+
+@media (min-width: 1280px) and (min-aspect-ratio: 4/3) {
+  .shell-layout {
+    grid-template-columns: 300px minmax(0, 1fr);
+    align-items: start;
+  }
+
+  .shell-sidebar-rail {
+    display: block;
+  }
+
+  .shell-mobile-entry,
+  .shell-mobile-layer {
+    display: none;
+  }
+}
+
 .skeleton-base {
   position: relative;
   overflow: hidden;

@@ -1,37 +1,77 @@
 "use client";
 
 import type React from "react";
-import { Clock3, PlusCircle, Star } from "lucide-react";
+import Link from "next/link";
+import {
+  ArrowRight,
+  CalendarDays,
+  CheckCircle2,
+  Clock3,
+  Coins,
+  Fuel,
+  MapPinned,
+  PlayCircle,
+  ReceiptText,
+  Route,
+  Timer,
+  Trash2,
+  Waypoints,
+} from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useMemo, useState, useTransition } from "react";
+import { useEffect, useMemo, useState, useTransition } from "react";
 
 import { addTransactionAction } from "@/app/transactions/actions";
 import { useDriverJournal } from "@/components/driver-journal/use-driver-journal";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import {
+  buildCurrentTimeValue,
   buildTodayKey,
-  calculateWorkedMinutes,
-  type ClosureWalletAllocation,
+  formatWorkedHours,
+  sortCheckpointsByTime,
+  sortClosuresByDateDesc,
+  type ActiveJourneyRecord,
   type DailyClosureRecord,
   type DailyExpenseCategory,
+  type JourneyGainCategory,
 } from "@/lib/driver-journal";
-import { cn } from "@/lib/utils";
 import type { SettingsRecord as AppSettingsRecord, Wallet as AppWallet } from "@/lib/types";
+import { cn } from "@/lib/utils";
 
-const expenseCategories: { key: DailyExpenseCategory; label: string }[] = [
-  { key: "Combustivel", label: "Combustivel" },
-  { key: "Lanche", label: "Lanche" },
-  { key: "Pedagio", label: "Pedagio" },
-  { key: "Lavagem", label: "Lavagem" },
-  { key: "Manutencao", label: "Manutencao" },
-  { key: "Outro", label: "Outros" },
-];
+import {
+  buildEmptyReviewForm,
+  buildJourneyDraftFromClosure,
+  buildReviewFormFromJourney,
+  buildReviewMetrics,
+  buildTransactionDate,
+  buildWalletDescription,
+  createLocalId,
+  expenseCategories,
+  formatDateLabel,
+  formatKm,
+  gainCategories,
+  isValidDateKey,
+  money,
+  summarizeJourney,
+  type JourneyReviewForm,
+  wizardSteps,
+} from "./close-day-helpers";
+import {
+  CompactBreakdownRow,
+  Field,
+  InfoPill,
+  InlineNoticeCard,
+  MetricTile,
+  QuickActionButton,
+  QuickInfoCard,
+  ReadingRow,
+  SelectField,
+  TextAreaField,
+  WalletRow,
+  type InlineNotice,
+  type NoticeTone,
+} from "./close-day-ui";
 
-const money = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" });
+type QuickAction = "gain" | "expense" | "checkpoint" | null;
+type FinalizeStep = 1 | 2 | 3 | 4;
 
 type CloseDayProps = {
   settings: AppSettingsRecord;
@@ -39,6 +79,7 @@ type CloseDayProps = {
   embedded?: boolean;
   initialClosure?: DailyClosureRecord | null;
   mode?: "create" | "edit";
+  showCheckpoints?: boolean;
 };
 
 export function CloseDayClient({
@@ -47,795 +88,963 @@ export function CloseDayClient({
   embedded = false,
   initialClosure = null,
   mode = "create",
+  showCheckpoints = true,
 }: CloseDayProps) {
   const router = useRouter();
-  const { store, updateStore } = useDriverJournal();
+  const { store, loaded, updateStore } = useDriverJournal();
   const [pending, startTransition] = useTransition();
-  const [message, setMessage] = useState<string | null>(null);
-  const [closingDate, setClosingDate] = useState(initialClosure?.date ?? buildTodayKey());
-  const [useDetailedTime, setUseDetailedTime] = useState(Boolean(initialClosure?.startTime && initialClosure?.endTime));
-  const [gainForm, setGainForm] = useState({
-    uber: initialClosure ? String(initialClosure.uberAmount || "") : "",
-    app99: initialClosure ? String(initialClosure.app99Amount || "") : "",
-    other: initialClosure ? String(initialClosure.otherAmount || "") : "",
-  });
-  const [expenseForm, setExpenseForm] = useState<Record<DailyExpenseCategory, string>>({
-    Combustivel: initialClosure ? getExpenseValue(initialClosure, "Combustivel") : "",
-    Lanche: initialClosure ? getExpenseValue(initialClosure, "Lanche") : "",
-    Pedagio: initialClosure ? getExpenseValue(initialClosure, "Pedagio") : "",
-    Lavagem: initialClosure ? getExpenseValue(initialClosure, "Lavagem") : "",
-    Manutencao: initialClosure ? getExpenseValue(initialClosure, "Manutencao") : "",
-    Outro: initialClosure ? getExpenseValue(initialClosure, "Outro") : "",
-  });
-  const [directWorkedHours, setDirectWorkedHours] = useState(initialClosure ? String(initialClosure.workedMinutes / 60 || "") : "");
-  const [timeForm, setTimeForm] = useState({
-    start: initialClosure?.startTime ?? "",
-    end: initialClosure?.endTime ?? "",
-  });
-  const [kmForm, setKmForm] = useState({
-    start: initialClosure?.startKm ? String(initialClosure.startKm) : "",
-    end: initialClosure?.endKm ? String(initialClosure.endKm) : "",
-  });
-  const [fuelForm, setFuelForm] = useState({
-    amount: initialClosure?.fuelAmount ? String(initialClosure.fuelAmount) : "",
-    liters: initialClosure?.fuelLiters ? String(initialClosure.fuelLiters) : "",
-    consumption: initialClosure?.fuelConsumption ? String(initialClosure.fuelConsumption) : "",
-  });
-  const [walletAllocation, setWalletAllocation] = useState<Record<string, string>>(
-    Object.fromEntries(
-      wallets.map((wallet) => [
-        wallet.id,
-        getWalletAllocationValue(initialClosure, wallet.id),
-      ]),
-    ),
-  );
-  const defaultDigitalWalletId = useMemo(
-    () => wallets.find((wallet) => wallet.tipo === "digital")?.id ?? null,
-    [wallets],
+  const [notice, setNotice] = useState<InlineNotice | null>(null);
+  const [activeQuickAction, setActiveQuickAction] = useState<QuickAction>(null);
+  const [showFinalizeWizard, setShowFinalizeWizard] = useState(mode === "edit");
+  const [finalizeStep, setFinalizeStep] = useState<FinalizeStep>(1);
+  const [currentTime, setCurrentTime] = useState(() => buildCurrentTimeValue());
+  const [editingJourney, setEditingJourney] = useState<ActiveJourneyRecord | null>(() =>
+    initialClosure ? buildJourneyDraftFromClosure(initialClosure) : null,
   );
 
-  const gains = useMemo(() => {
-    const uber = Number(gainForm.uber || 0);
-    const app99 = Number(gainForm.app99 || 0);
-    const other = Number(gainForm.other || 0);
-    return { uber, app99, other, total: uber + app99 + other };
-  }, [gainForm]);
-
-  const expenses = useMemo(() => {
-    const entries = expenseCategories
-      .map(({ key }) => ({
-        category: key,
-        amount: Number(expenseForm[key] || 0),
-      }))
-      .filter((entry) => entry.amount > 0);
-
-    return {
-      entries,
-      total: entries.reduce((sum, entry) => sum + entry.amount, 0),
-    };
-  }, [expenseForm]);
-
-  const workedMinutes = useMemo(() => {
-    if (!useDetailedTime) {
-      const hours = Number(directWorkedHours || 0);
-      return hours > 0 ? Math.round(hours * 60) : 0;
-    }
-
-    return calculateWorkedMinutes(timeForm.start, timeForm.end);
-  }, [directWorkedHours, timeForm.end, timeForm.start, useDetailedTime]);
-
-  const workedHours = workedMinutes / 60;
-  const workedKm = Math.max(Number(kmForm.end || 0) - Number(kmForm.start || 0), 0);
-  const manualConsumption = Number(fuelForm.consumption || 0);
-  const totalFuelAmount = Number(fuelForm.amount || 0);
-  const totalFuelLiters = Number(fuelForm.liters || 0);
-  const lucroReal = gains.total - expenses.total;
-  const hourlyAverage = workedHours > 0 ? gains.total / workedHours : 0;
-  const profitPerKm = workedKm > 0 ? lucroReal / workedKm : 0;
-  const walletTotal = Object.values(walletAllocation).reduce((sum, value) => sum + Number(value || 0), 0);
-  const walletDifference = gains.total - walletTotal;
-  const hasWalletMismatch = gains.total > 0 && Math.abs(walletDifference) > 0.009;
-  const invalidTimeRange = useDetailedTime && Boolean(timeForm.start && timeForm.end) && workedMinutes <= 0;
-  const invalidKmRange = Boolean(kmForm.start && kmForm.end) && workedKm <= 0;
-  const isValidClosingDate = /^\d{4}-\d{2}-\d{2}$/.test(closingDate) && !Number.isNaN(new Date(`${closingDate}T00:00:00`).getTime());
-  const existingClosureForDate = store.closures.find(
-    (closure) => closure.date === closingDate && closure.id !== initialClosure?.id,
-  );
-  const saveDisabledReason = getSaveDisabledReason({
-    closingDate,
-    isValidClosingDate,
-    hasExistingClosure: Boolean(existingClosureForDate),
-    gainsTotal: gains.total,
-    useDetailedTime,
-    directWorkedHours,
-    invalidTimeRange,
-    invalidKmRange,
-    hasWalletMismatch,
-    walletsLength: wallets.length,
+  const [startForm, setStartForm] = useState(() => ({
+    date: initialClosure?.date ?? buildTodayKey(),
+    startTime: initialClosure?.startTime || buildCurrentTimeValue(),
+    startKm: initialClosure?.startKm ? String(initialClosure.startKm) : "",
+  }));
+  const [gainDraft, setGainDraft] = useState<{ amount: string; category: JourneyGainCategory }>({
+    amount: "",
+    category: "Uber",
   });
+  const [expenseDraft, setExpenseDraft] = useState<{ amount: string; category: DailyExpenseCategory }>({
+    amount: "",
+    category: "Combustivel",
+  });
+  const [checkpointDraft, setCheckpointDraft] = useState({
+    time: buildCurrentTimeValue(),
+    accumulatedAmount: "",
+    currentKm: "",
+    note: "",
+  });
+  const [reviewForm, setReviewForm] = useState<JourneyReviewForm>(() => buildEmptyReviewForm(wallets));
 
-  async function handleSave() {
-    setMessage(null);
+  const journey = mode === "edit" ? editingJourney : store.activeJourney;
+  const todayKey = buildTodayKey();
+  const closureForStartDate =
+    mode === "create" ? store.closures.find((closure) => closure.date === startForm.date) ?? null : null;
+  const checkpointsEnabled = showCheckpoints;
 
-    if (!closingDate) {
-      setMessage("Informe a data do fechamento.");
+  useEffect(() => {
+    const interval = window.setInterval(() => {
+      setCurrentTime(buildCurrentTimeValue());
+    }, 60_000);
+
+    return () => window.clearInterval(interval);
+  }, []);
+
+  const journeySummary = useMemo(() => {
+    if (!journey) {
+      return null;
+    }
+
+    return summarizeJourney(journey, journey.date === todayKey ? currentTime : null);
+  }, [currentTime, journey, todayKey]);
+
+  const reviewMetrics = useMemo(() => {
+    if (!journey) {
+      return null;
+    }
+
+    return buildReviewMetrics(journey, reviewForm, wallets.length);
+  }, [journey, reviewForm, wallets.length]);
+
+  function pushNotice(tone: NoticeTone, text: string) {
+    setNotice({ tone, text });
+  }
+
+  function updateJourney(nextJourney: ActiveJourneyRecord) {
+    if (mode === "edit") {
+      setEditingJourney(nextJourney);
       return;
     }
 
-    if (!isValidClosingDate) {
-      setMessage("Informe uma data de fechamento valida.");
+    updateStore({
+      ...store,
+      activeJourney: nextJourney,
+    });
+  }
+
+  function openQuickAction(action: QuickAction) {
+    if (!journeySummary) {
       return;
     }
 
-    if (existingClosureForDate) {
-      setMessage("Ja existe um fechamento registrado para esta data.");
+    if (action === "checkpoint" && !checkpointsEnabled) {
       return;
     }
 
-    if (gains.total <= 0) {
-      setMessage("Informe pelo menos um ganho do dia.");
-      return;
+    setNotice(null);
+    setShowFinalizeWizard(false);
+    setFinalizeStep(1);
+    setActiveQuickAction(action);
+
+    if (action === "gain") {
+      setGainDraft({ amount: "", category: "Uber" });
     }
 
-    if (!useDetailedTime && Number(directWorkedHours || 0) <= 0) {
-      setMessage("Informe as horas trabalhadas do dia.");
-      return;
+    if (action === "expense") {
+      setExpenseDraft({ amount: "", category: "Combustivel" });
     }
 
-    if (useDetailedTime && invalidTimeRange) {
-      setMessage("A hora de fim precisa ser maior que a hora de inicio.");
-      return;
-    }
-
-    if (invalidKmRange) {
-      setMessage("O KM final precisa ser maior que o KM inicial.");
-      return;
-    }
-
-    if (wallets.length > 0 && hasWalletMismatch) {
-      setMessage("A soma das carteiras precisa bater com o total de ganhos do dia.");
-      return;
-    }
-
-    const transactionDate = buildTransactionDate(closingDate);
-    const uniqueSuffix = transactionDate.replace(/\D/g, "");
-    const transactionsToPersist: Parameters<typeof addTransactionAction>[0][] = [];
-
-    if (wallets.length > 0) {
-      for (const wallet of wallets) {
-        const amount = Number(walletAllocation[wallet.id] || 0);
-        if (amount <= 0) {
-          continue;
-        }
-
-        transactionsToPersist.push({
-          data: transactionDate,
-          valor: amount,
-          tipo: "ganho",
-          app: "Outro",
-          formaPagamento: wallet.tipo === "fisica" ? "dinheiro" : "digital",
-          categoria: "Fechamento do dia",
-          descricao: buildWalletDescription(gains),
-          walletId: wallet.id,
-        });
-      }
-    } else {
-      transactionsToPersist.push({
-        data: transactionDate,
-        valor: gains.total,
-        tipo: "ganho",
-        app: "Outro",
-        formaPagamento: "digital",
-        categoria: "Fechamento do dia",
-        descricao: buildWalletDescription(gains),
+    if (action === "checkpoint") {
+      setCheckpointDraft({
+        time: buildCurrentTimeValue(),
+        accumulatedAmount: journeySummary.gains.total > 0 ? String(journeySummary.gains.total) : "",
+        currentKm: journeySummary.partialKm > 0 && journey ? String(journey.startKm + journeySummary.partialKm) : "",
+        note: "",
       });
     }
+  }
 
-    transactionsToPersist.push(
-      ...expenses.entries.map((entry) => ({
-        data: transactionDate,
-        valor: entry.amount,
-        tipo: "gasto" as const,
-        app: "Outro" as const,
-        formaPagamento: "dinheiro" as const,
-        categoria: entry.category,
-        descricao: "Fechamento do dia",
-      })),
+  function handleStartJourney() {
+    setNotice(null);
+
+    if (!startForm.date || !isValidDateKey(startForm.date)) {
+      pushNotice("error", "Informe uma data valida para iniciar a jornada.");
+      return;
+    }
+
+    if (!startForm.startTime) {
+      pushNotice("error", "Informe a hora inicial da jornada.");
+      return;
+    }
+
+    const startKm = Number(startForm.startKm);
+    if (!startForm.startKm || Number.isNaN(startKm) || startKm < 0) {
+      pushNotice("error", "Informe o KM inicial para iniciar a jornada.");
+      return;
+    }
+
+    if (closureForStartDate) {
+      pushNotice("error", "Ja existe um fechamento salvo para essa data.");
+      return;
+    }
+
+    updateJourney({
+      id: createLocalId("journey"),
+      date: startForm.date,
+      startTime: startForm.startTime,
+      startKm,
+      gains: [],
+      expenses: [],
+      checkpoints: [],
+    });
+
+    setActiveQuickAction(null);
+    setShowFinalizeWizard(false);
+    pushNotice(
+      "success",
+      checkpointsEnabled
+        ? "Jornada iniciada. Agora voce pode registrar ganhos, gastos e checkpoints."
+        : "Jornada iniciada. Agora voce pode registrar ganhos e gastos durante o dia.",
     );
+  }
+
+  function handleAddGain(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!journey) {
+      return;
+    }
+
+    const amount = Number(gainDraft.amount);
+    if (Number.isNaN(amount) || amount <= 0) {
+      pushNotice("error", "Informe um valor valido para o ganho.");
+      return;
+    }
+
+    updateJourney({
+      ...journey,
+      gains: [...journey.gains, { id: createLocalId("gain"), category: gainDraft.category, amount }],
+    });
+
+    setGainDraft((current) => ({ ...current, amount: "" }));
+    pushNotice("success", "Ganho adicionado na jornada.");
+  }
+
+  function handleAddExpense(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!journey) {
+      return;
+    }
+
+    const amount = Number(expenseDraft.amount);
+    if (Number.isNaN(amount) || amount <= 0) {
+      pushNotice("error", "Informe um valor valido para o gasto.");
+      return;
+    }
+
+    updateJourney({
+      ...journey,
+      expenses: [...journey.expenses, { id: createLocalId("expense"), category: expenseDraft.category, amount }],
+    });
+
+    setExpenseDraft((current) => ({ ...current, amount: "" }));
+    pushNotice("success", "Gasto adicionado na jornada.");
+  }
+
+  function handleAddCheckpoint(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!journey) {
+      return;
+    }
+
+    const accumulatedAmount = Number(checkpointDraft.accumulatedAmount);
+    if (Number.isNaN(accumulatedAmount) || accumulatedAmount < 0) {
+      pushNotice("error", "Informe o valor arrecadado acumulado no checkpoint.");
+      return;
+    }
+
+    if (!checkpointDraft.time) {
+      pushNotice("error", "Informe a hora do checkpoint.");
+      return;
+    }
+
+    const currentKm = checkpointDraft.currentKm.trim().length > 0 ? Number(checkpointDraft.currentKm) : null;
+    if (currentKm !== null && (Number.isNaN(currentKm) || currentKm < journey.startKm)) {
+      pushNotice("error", "O KM do checkpoint precisa ser maior ou igual ao KM inicial.");
+      return;
+    }
+
+    updateJourney({
+      ...journey,
+      checkpoints: sortCheckpointsByTime([
+        ...journey.checkpoints,
+        {
+          id: createLocalId("checkpoint"),
+          time: checkpointDraft.time,
+          accumulatedAmount,
+          currentKm,
+          note: checkpointDraft.note.trim(),
+        },
+      ]),
+    });
+
+    setCheckpointDraft({
+      time: buildCurrentTimeValue(),
+      accumulatedAmount: "",
+      currentKm: "",
+      note: "",
+    });
+    pushNotice("success", "Checkpoint registrado.");
+  }
+
+  function handleRemoveCheckpoint(checkpointId: string) {
+    if (!journey) {
+      return;
+    }
+
+    updateJourney({
+      ...journey,
+      checkpoints: journey.checkpoints.filter((checkpoint) => checkpoint.id !== checkpointId),
+    });
+    pushNotice("default", "Checkpoint removido da jornada.");
+  }
+
+  function openFinalizeWizard() {
+    if (!journey) {
+      return;
+    }
+
+    setNotice(null);
+    setActiveQuickAction(null);
+    setReviewForm(buildReviewFormFromJourney(journey, initialClosure, wallets));
+    setFinalizeStep(1);
+    setShowFinalizeWizard(true);
+  }
+
+  function handleFinalizeStepAdvance() {
+    if (!journey || !reviewMetrics) {
+      return;
+    }
+
+    if (finalizeStep === 1 && (!reviewForm.endTime || !reviewForm.endKm || reviewMetrics.invalidTimeRange || reviewMetrics.invalidKmRange)) {
+      pushNotice("error", "Revise hora final e KM final antes de continuar.");
+      return;
+    }
+
+    if (finalizeStep === 2 && reviewMetrics.hasWalletMismatch) {
+      pushNotice("error", "A distribuicao nas carteiras precisa bater com o total de ganhos.");
+      return;
+    }
+
+    if (finalizeStep < 4) {
+      setFinalizeStep((current) => (current + 1) as FinalizeStep);
+    }
+  }
+
+  async function handleConfirmClosure() {
+    if (!journey || !reviewMetrics) {
+      return;
+    }
+
+    if (reviewMetrics.invalidTimeRange || reviewMetrics.invalidKmRange) {
+      pushNotice("error", "Revise os dados de encerramento antes de concluir.");
+      return;
+    }
+
+    if (reviewMetrics.hasWalletMismatch) {
+      pushNotice("error", "A distribuicao nas carteiras precisa bater com o total de ganhos.");
+      return;
+    }
+
+    if (mode === "create" && store.closures.some((closure) => closure.date === journey.date)) {
+      pushNotice("error", "Ja existe um fechamento salvo para essa data.");
+      return;
+    }
+
+    const transactionsToPersist = buildTransactionsToPersist({
+      wallets,
+      reviewForm,
+      reviewMetrics,
+      journeyDate: journey.date,
+    });
 
     for (const transaction of transactionsToPersist) {
       const result = await addTransactionAction(transaction);
       if (!result.ok) {
-        setMessage(result.message);
+        pushNotice("error", result.message);
         return;
       }
     }
 
-    const walletAllocations: ClosureWalletAllocation[] = wallets
-      .map((wallet) => ({
-        walletId: wallet.id,
-        amount: Number(walletAllocation[wallet.id] || 0),
-      }))
-      .filter((entry) => entry.amount > 0);
+    const closure = buildClosureFromReview({
+      journey,
+      reviewForm,
+      reviewMetrics,
+      initialClosure,
+    });
 
-    const closure: DailyClosureRecord = {
-      id: initialClosure?.id ?? `${closingDate}-${uniqueSuffix}`,
-      date: closingDate,
-      uberAmount: gains.uber,
-      app99Amount: gains.app99,
-      otherAmount: gains.other,
-      expenses: expenses.entries.map((entry) => ({
-        id: `${entry.category}-${uniqueSuffix}`,
-        category: entry.category,
-        amount: entry.amount,
-      })),
-      startTime: useDetailedTime ? timeForm.start : "",
-      endTime: useDetailedTime ? timeForm.end : "",
-      startKm: Number(kmForm.start || 0),
-      endKm: Number(kmForm.end || 0),
-      fuelAmount: totalFuelAmount,
-      fuelLiters: totalFuelLiters,
-      totalGains: gains.total,
-      totalExpenses: expenses.total,
-      workedMinutes,
-      workedKm,
-      fuelConsumption: manualConsumption > 0 ? manualConsumption : null,
-      hourlyAverage,
-      walletAllocations,
-    };
     const previousClosureDate = initialClosure?.date ?? closure.date;
 
     updateStore({
-      closures: sortClosuresByDateDesc([
-        closure,
-        ...store.closures.filter((item) => item.id !== closure.id),
-      ]),
+      activeJourney: mode === "create" ? null : store.activeJourney,
+      closures: sortClosuresByDateDesc([closure, ...store.closures.filter((item) => item.id !== closure.id)]),
       fuelEntries:
-        closure.fuelAmount > 0 && closure.fuelLiters > 0
+        reviewMetrics.fuelAmount > 0 && reviewMetrics.fuelLiters > 0
           ? [
               {
-                id: `fuel-${uniqueSuffix}`,
+                id: createLocalId("fuel"),
                 date: closure.date,
-                liters: closure.fuelLiters,
-                amount: closure.fuelAmount,
-                pricePerLiter: closure.fuelAmount / closure.fuelLiters,
+                liters: reviewMetrics.fuelLiters,
+                amount: reviewMetrics.fuelAmount,
+                pricePerLiter: reviewMetrics.fuelAmount / reviewMetrics.fuelLiters,
               },
               ...store.fuelEntries.filter((entry) => entry.date !== previousClosureDate),
             ]
           : store.fuelEntries.filter((entry) => entry.date !== previousClosureDate),
       maintenanceEntries:
-        expenses.entries.find((entry) => entry.category === "Manutencao")
+        reviewMetrics.expenseEntries.find((entry) => entry.category === "Manutencao")
           ? [
               {
-                id: `maintenance-${uniqueSuffix}`,
+                id: createLocalId("maintenance"),
                 date: closure.date,
                 type: "Manutencao geral",
-                amount: expenses.entries
+                amount: reviewMetrics.expenseEntries
                   .filter((entry) => entry.category === "Manutencao")
                   .reduce((sum, entry) => sum + entry.amount, 0),
-                carKm: Number(kmForm.end || 0),
+                carKm: Number(reviewForm.endKm || 0),
               },
               ...store.maintenanceEntries.filter((entry) => entry.date !== previousClosureDate),
             ]
           : store.maintenanceEntries.filter((entry) => entry.date !== previousClosureDate),
     });
 
-    setMessage(mode === "edit" ? "Fechamento atualizado com sucesso." : "Fechamento salvo com sucesso.");
+    setShowFinalizeWizard(false);
+    setActiveQuickAction(null);
+    setFinalizeStep(1);
+    setStartForm({ date: buildTodayKey(), startTime: buildCurrentTimeValue(), startKm: "" });
+    pushNotice("success", mode === "edit" ? "Fechamento atualizado com sucesso." : "Jornada fechada com sucesso.");
     router.refresh();
+
     if (mode === "edit") {
       router.push("/fechamentos");
     }
   }
 
-  function handleWalletAllocationChange(walletId: string, value: string) {
-    setWalletAllocation((current) => ({
-      ...current,
-      [walletId]: value,
-    }));
+  if (!loaded && mode === "create") {
+    return <SimpleStateCard text="Carregando a jornada do dia..." />;
+  }
+
+  if (!journey && mode === "edit") {
+    return <SimpleStateCard text="Nao foi possivel carregar esse fechamento para edicao." />;
   }
 
   return (
-    <Card className={cn(embedded ? "overflow-hidden" : undefined)}>
-      <CardHeader className={cn(embedded ? "border-b border-[var(--color-border)] pb-6" : undefined)}>
-        <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-          <div>
-            <CardTitle>Fechamento do dia</CardTitle>
-            <CardDescription>Registre seu dia de trabalho de forma rapida, sem corrida por corrida.</CardDescription>
-          </div>
-          <Badge variant="secondary">{mode === "edit" ? "Edicao" : "Fluxo consolidado"}</Badge>
-        </div>
-      </CardHeader>
-
-      <CardContent className="space-y-6 pt-6">
-        <SectionBlock
-          title="Data do fechamento"
-          description="Escolha o dia que voce esta registrando. O fechamento de hoje ja vem preenchido."
-        >
-          <div className="grid gap-4 md:max-w-xs">
-            <Field
-              label="Data do fechamento"
-              type="date"
-              value={closingDate}
-              onChange={setClosingDate}
-              inputMode={undefined}
+    <div className={cn("space-y-6", embedded ? "pt-0" : undefined)}>
+      {notice ? <InlineNoticeCard notice={notice} /> : null}
+      {!journey ? (
+        <div className="grid gap-4 lg:grid-cols-[1.1fr_0.9fr]">
+          <StartJourneyCard
+            closureForStartDate={Boolean(closureForStartDate)}
+            showCheckpoints={checkpointsEnabled}
+            startForm={startForm}
+            setStartForm={setStartForm}
+            onStart={handleStartJourney}
+          />
+          <div className="grid gap-4">
+            <QuickInfoCard title="Ganhos e gastos no momento certo" description="Lance o que aconteceu durante o dia, sem formulario longo." icon={ReceiptText} />
+            <QuickInfoCard
+              title={checkpointsEnabled ? "Checkpoints opcionais" : "Fechamento mais direto"}
+              description={
+                checkpointsEnabled
+                  ? "Guarde leituras por horario para comparar dias mais fortes."
+                  : "Use uma jornada mais enxuta, sem checkpoints no meio do dia."
+              }
+              icon={checkpointsEnabled ? Waypoints : ArrowRight}
             />
+            <QuickInfoCard title="Meta diaria visivel" description={`Sua meta diaria hoje e ${money.format(settings.metaDiaria)}.`} icon={Coins} />
           </div>
-          {!closingDate ? <p className="text-sm text-[var(--color-destructive)]">Informe a data do fechamento.</p> : null}
-          {closingDate && !isValidClosingDate ? (
-            <p className="text-sm text-[var(--color-destructive)]">Informe uma data valida.</p>
-          ) : null}
-          {existingClosureForDate ? (
-            <p className="text-sm text-[var(--color-destructive)]">Ja existe um fechamento registrado para esta data.</p>
-          ) : null}
-        </SectionBlock>
-
-        <div className="grid gap-4 xl:grid-cols-2">
-          <SectionBlock
-            title="Ganhos do dia"
-            description="Separe so por aplicativo e deixe o total bruto por conta do sistema."
-            className="h-full"
-            footer={<SummaryBar label="Total bruto do dia" value={money.format(gains.total)} />}
-          >
-            <div className="grid gap-4 md:grid-cols-3">
-              <Field
-                label="Ganhos Uber"
-                type="number"
-                step="0.01"
-                value={gainForm.uber}
-                labelClassName="text-xs whitespace-nowrap"
-                onChange={(value) => setGainForm((current) => ({ ...current, uber: value }))}
-              />
-              <Field
-                label="Ganhos 99"
-                type="number"
-                step="0.01"
-                value={gainForm.app99}
-                labelClassName="text-xs whitespace-nowrap"
-                onChange={(value) => setGainForm((current) => ({ ...current, app99: value }))}
-              />
-              <Field
-                label="Outros ganhos"
-                type="number"
-                step="0.01"
-                value={gainForm.other}
-                labelClassName="text-xs whitespace-nowrap"
-                onChange={(value) => setGainForm((current) => ({ ...current, other: value }))}
-              />
-            </div>
-          </SectionBlock>
-
-          <SectionBlock
-            title="Gastos do dia"
-            description="Preencha so o que aconteceu hoje. O restante pode ficar em branco."
-            className="h-full"
-            footer={<SummaryBar label="Total gasto no dia" value={money.format(expenses.total)} />}
-          >
-            <div className="grid gap-x-4 gap-y-5 sm:grid-cols-2 xl:grid-cols-3">
-              {expenseCategories.map((category) => (
-                <Field
-                  key={category.key}
-                  label={category.label}
-                  type="number"
-                  step="0.01"
-                  value={expenseForm[category.key]}
-                  labelClassName="text-xs"
-                  onChange={(value) => setExpenseForm((current) => ({ ...current, [category.key]: value }))}
-                />
-              ))}
-            </div>
-          </SectionBlock>
         </div>
+      ) : null}
 
-        <div className="grid gap-4 xl:grid-cols-3">
-          <SectionBlock
-            title="Horas trabalhadas"
-            description="Use o total de horas do dia ou, se preferir, informe inicio e fim."
-            className="h-full"
-            footer={<SummaryBar label="Horas do dia" value={workedMinutes > 0 ? formatCompactHours(workedMinutes) : "--"} />}
-          >
-            {!useDetailedTime ? (
-              <div className="space-y-4">
-                <Field
-                  label="Horas trabalhadas"
-                  type="number"
-                  step="0.1"
-                  placeholder="Ex.: 8 ou 8.5"
-                  value={directWorkedHours}
-                  onChange={setDirectWorkedHours}
-                />
-                <button
-                  type="button"
-                  onClick={() => setUseDetailedTime(true)}
-                  className="accent-emerald-surface inline-flex h-11 w-full items-center justify-center gap-2 rounded-2xl border px-4 text-sm font-medium text-[var(--color-foreground)] transition hover:bg-[rgb(52_211_153_/_0.18)]"
-                >
-                  <Clock3 className="h-4 w-4" />
-                  Informar horario de inicio e fim
-                </button>
-              </div>
-            ) : (
-              <div className="space-y-4">
-                <div className="grid gap-4 sm:grid-cols-2">
-                  <Field
-                    label="Hora de inicio"
-                    type="time"
-                    value={timeForm.start}
-                    onChange={(value) => setTimeForm((current) => ({ ...current, start: value }))}
-                    inputMode={undefined}
-                  />
-                  <Field
-                    label="Hora de fim"
-                    type="time"
-                    value={timeForm.end}
-                    onChange={(value) => setTimeForm((current) => ({ ...current, end: value }))}
-                    inputMode={undefined}
-                  />
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setUseDetailedTime(false)}
-                  className="accent-emerald-surface inline-flex h-11 w-full items-center justify-center gap-2 rounded-2xl border px-4 text-sm font-medium text-[var(--color-foreground)] transition hover:bg-[rgb(52_211_153_/_0.18)]"
-                >
-                  <PlusCircle className="h-4 w-4" />
-                  Usar horas trabalhadas direto
-                </button>
-              </div>
-            )}
+      {journey && !showFinalizeWizard && journeySummary ? (
+        <>
+          <JourneyHeaderCard
+            journey={journey}
+            onFinalize={openFinalizeWizard}
+            showCheckpoints={checkpointsEnabled}
+          />
 
-            {invalidTimeRange ? (
-              <p className="text-sm text-[var(--color-destructive)]">A hora de fim precisa ser maior que a hora de inicio.</p>
-            ) : null}
-          </SectionBlock>
+          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
+            <MetricTile label="Ganho acumulado" value={money.format(journeySummary.gains.total)} icon={Coins} accentClassName="accent-emerald-surface" />
+            <MetricTile label="Gasto acumulado" value={money.format(journeySummary.totalExpenses)} icon={ReceiptText} accentClassName="accent-amber-surface" />
+            <MetricTile label="Lucro parcial" value={money.format(journeySummary.profit)} icon={CheckCircle2} accentClassName="accent-sky-surface" />
+            <MetricTile label="Duracao ate agora" value={journeySummary.liveWorkedMinutes > 0 ? formatWorkedHours(journeySummary.liveWorkedMinutes) : "--"} icon={Timer} accentClassName="accent-sky-surface" />
+            <MetricTile label="KM parcial" value={journeySummary.partialKm > 0 ? `${journeySummary.partialKm.toFixed(1)} km` : "--"} icon={MapPinned} accentClassName="accent-amber-surface" />
+          </div>
 
-          <SectionBlock
-            title="KM rodados"
-            description="Basta registrar o KM inicial e o final do expediente."
-            className="h-full"
-            footer={<SummaryBar label="KM rodados no dia" value={workedKm > 0 ? `${workedKm} km` : "--"} />}
-          >
-            <div className="grid gap-4 sm:grid-cols-2">
-              <Field
-                label="KM inicial"
-                type="number"
-                step="0.1"
-                value={kmForm.start}
-                onChange={(value) => setKmForm((current) => ({ ...current, start: value }))}
-              />
-              <Field
-                label="KM final"
-                type="number"
-                step="0.1"
-                value={kmForm.end}
-                onChange={(value) => setKmForm((current) => ({ ...current, end: value }))}
-              />
-            </div>
-            {invalidKmRange ? (
-              <p className="text-sm text-[var(--color-destructive)]">O KM final precisa ser maior que o KM inicial.</p>
-            ) : null}
-          </SectionBlock>
+          <QuickActionsSection
+            activeQuickAction={activeQuickAction}
+            checkpointDraft={checkpointDraft}
+            expenseDraft={expenseDraft}
+            gainDraft={gainDraft}
+            onAddCheckpoint={handleAddCheckpoint}
+            onAddExpense={handleAddExpense}
+            onAddGain={handleAddGain}
+            onFinalize={openFinalizeWizard}
+            onOpenQuickAction={openQuickAction}
+            showCheckpoints={checkpointsEnabled}
+            setActiveQuickAction={setActiveQuickAction}
+            setCheckpointDraft={setCheckpointDraft}
+            setExpenseDraft={setExpenseDraft}
+            setGainDraft={setGainDraft}
+          />
 
-          <SectionBlock
-            title="Abastecimento e carro"
-            description="Abastecimento e consumo podem ser registrados sem misturar uma coisa com a outra."
-            className="h-full"
-            footer={
-              <SummaryBar
-                label="Consumo informado"
-                value={manualConsumption > 0 ? `${manualConsumption.toFixed(1)} km/l` : "--"}
-              />
-            }
-          >
-            <div className="grid gap-4 sm:grid-cols-2">
-              <Field
-                label="Valor abastecido"
-                type="number"
-                step="0.01"
-                value={fuelForm.amount}
-                onChange={(value) => setFuelForm((current) => ({ ...current, amount: value }))}
-              />
-              <Field
-                label="Litros abastecidos"
-                type="number"
-                step="0.01"
-                value={fuelForm.liters}
-                onChange={(value) => setFuelForm((current) => ({ ...current, liters: value }))}
-              />
-            </div>
-            <Field
-              label="Consumo do carro (km/l)"
-              type="number"
-              step="0.1"
-              placeholder="Ex.: 10.3"
-              value={fuelForm.consumption}
-              onChange={(value) => setFuelForm((current) => ({ ...current, consumption: value }))}
-            />
-          </SectionBlock>
-        </div>
-
-        <div className="grid gap-6 xl:grid-cols-[1.2fr_0.8fr]">
-          <SectionBlock title="Resumo automatico" description="Confira o fechamento antes de salvar.">
-            <div className="grid gap-3 md:grid-cols-2 2xl:grid-cols-4">
-              <ReadingRow label="Total ganho" value={money.format(gains.total)} />
-              <ReadingRow label="Total gasto" value={money.format(expenses.total)} />
-              <ReadingRow label="Lucro do dia" value={money.format(lucroReal)} />
-              <ReadingRow label="Horas trabalhadas" value={workedMinutes > 0 ? formatCompactHours(workedMinutes) : "--"} />
-              <ReadingRow label="KM rodados" value={workedKm > 0 ? `${workedKm} km` : "--"} />
-              <ReadingRow label="Media por hora" value={workedHours > 0 ? `${money.format(hourlyAverage)}/h` : "--"} />
-              <ReadingRow label="Lucro por km" value={workedKm > 0 ? `${money.format(profitPerKm)}/km` : "--"} />
-              <ReadingRow label="Consumo medio" value={manualConsumption > 0 ? `${manualConsumption.toFixed(1)} km/l` : "--"} />
-            </div>
-          </SectionBlock>
-
-          <SectionBlock
-            title="Salvar fechamento"
-            description="Distribua os ganhos nas carteiras usadas no dia e confirme o fechamento."
-          >
-            <div className="space-y-4">
-              <div className="space-y-3">
-                <div className="flex items-center justify-between gap-3">
-                  <Label className="text-sm">Carteiras de entrada</Label>
-                  <span className="text-sm text-[var(--color-muted-foreground)]">Total do dia: {money.format(gains.total)}</span>
-                </div>
-
-                <div className="space-y-3">
-                  {wallets.map((wallet) => (
-                    <WalletRow
-                      key={wallet.id}
-                      wallet={wallet}
-                      value={walletAllocation[wallet.id] ?? ""}
-                      onChange={(value) => handleWalletAllocationChange(wallet.id, value)}
-                      isDefault={wallet.id === defaultDigitalWalletId}
-                    />
+          <div className="theme-border surface-soft rounded-[1.5rem] border p-6">
+            <div className="grid gap-6 lg:grid-cols-2">
+              <div>
+                <p className="text-sm uppercase tracking-[0.2em] text-[var(--color-muted-foreground)]">Ganhos acumulados</p>
+                <div className="mt-4 space-y-3">
+                  {gainCategories.map((item) => (
+                    <CompactBreakdownRow key={item.key} label={item.label} value={money.format(journeySummary.gains[item.key])} />
                   ))}
-
-                  {wallets.length === 0 ? (
-                    <p className="text-sm leading-6 text-[var(--color-muted-foreground)]">
-                      Nenhuma carteira cadastrada. O fechamento sera salvo sem distribuir entradas.
-                    </p>
-                  ) : null}
                 </div>
-
-                {wallets.length > 0 ? (
-                  <div className="theme-border rounded-2xl border px-4 py-3 text-sm">
-                    <div className="flex items-center justify-between gap-3">
-                      <span className="text-[var(--color-muted-foreground)]">Soma das carteiras</span>
-                      <span className="font-semibold text-[var(--color-foreground)]">{money.format(walletTotal)}</span>
-                    </div>
-                    <div className="mt-2 flex items-center justify-between gap-3">
-                      <span className="text-[var(--color-muted-foreground)]">Diferenca</span>
-                      <span className={cn("font-semibold", hasWalletMismatch ? "text-[var(--color-destructive)]" : "text-[var(--accent-emerald-fg)]")}>
-                        {money.format(Math.abs(walletDifference))}
-                      </span>
-                    </div>
-                  </div>
-                ) : null}
               </div>
 
-              <Button
-                className="home-cta-button h-12 w-full text-base"
-                disabled={pending || Boolean(saveDisabledReason)}
-                title={pending ? "Salvando fechamento..." : saveDisabledReason ?? "Salvar fechamento do dia"}
-                onClick={() => startTransition(handleSave)}
-              >
-                {pending ? "Salvando..." : mode === "edit" ? "Salvar alteracoes" : "Salvar fechamento do dia"}
-              </Button>
-
-              <p className="text-sm leading-6 text-[var(--color-muted-foreground)]">
-                Meta diaria configurada: {money.format(settings.metaDiaria)}.
-              </p>
-
-              {message ? <p className="text-sm text-[var(--color-muted-foreground)]">{message}</p> : null}
+              <div>
+                <p className="text-sm uppercase tracking-[0.2em] text-[var(--color-muted-foreground)]">Gastos acumulados</p>
+                <div className="mt-4 space-y-3">
+                  {expenseCategories.map((item) => (
+                    <CompactBreakdownRow key={item.key} label={item.label} value={money.format(journeySummary.expenses[item.key])} />
+                  ))}
+                </div>
+              </div>
             </div>
-          </SectionBlock>
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
+          </div>
 
-function SectionBlock({
-  title,
-  description,
-  children,
-  className,
-  contentClassName,
-  footer,
-}: {
-  title: string;
-  description: string;
-  children: React.ReactNode;
-  className?: string;
-  contentClassName?: string;
-  footer?: React.ReactNode;
-}) {
-  return (
-    <div className={cn("theme-border surface-soft flex flex-col rounded-[1.5rem] border p-4 sm:p-5", className)}>
-      <div className="mb-4">
-        <p className="text-base font-semibold text-[var(--color-foreground)]">{title}</p>
-        <p className="mt-1 text-sm leading-6 text-[var(--color-muted-foreground)]">{description}</p>
-      </div>
-      <div className={cn("space-y-4", footer ? "flex-1" : undefined, contentClassName)}>{children}</div>
-      {footer ? <div className="mt-4">{footer}</div> : null}
-    </div>
-  );
-}
-
-function Field({
-  label,
-  value,
-  onChange,
-  type = "text",
-  step,
-  placeholder,
-  labelClassName,
-  inputMode = "decimal",
-}: {
-  label: string;
-  value: string;
-  onChange: (value: string) => void;
-  type?: React.HTMLInputTypeAttribute;
-  step?: string;
-  placeholder?: string;
-  labelClassName?: string;
-  inputMode?: React.HTMLAttributes<HTMLInputElement>["inputMode"];
-}) {
-  return (
-    <div className="space-y-2">
-      <Label className={cn("leading-none", labelClassName)}>{label}</Label>
-      <Input
-        type={type}
-        step={step}
-        value={value}
-        placeholder={placeholder}
-        onChange={(event) => onChange(event.target.value)}
-        inputMode={inputMode}
-      />
-    </div>
-  );
-}
-
-function WalletRow({
-  wallet,
-  value,
-  onChange,
-  isDefault = false,
-}: {
-  wallet: AppWallet;
-  value: string;
-  onChange: (value: string) => void;
-  isDefault?: boolean;
-}) {
-  return (
-    <div className="grid gap-3 rounded-2xl bg-[var(--surface-strong)] p-3 sm:grid-cols-[minmax(0,1fr)_10rem] sm:items-center">
-      <div>
-        <div className="flex items-center gap-2">
-          <p className="font-medium text-[var(--color-foreground)]">{wallet.nome}</p>
-          {isDefault ? (
-            <span className="accent-emerald-surface inline-flex h-6 w-6 items-center justify-center rounded-full border" title="Carteira padrao">
-              <Star className="h-3.5 w-3.5" />
-            </span>
+          {checkpointsEnabled ? (
+            <CheckpointsCard checkpoints={journey.checkpoints} onRemove={handleRemoveCheckpoint} />
           ) : null}
-        </div>
-        <p className="text-xs uppercase tracking-[0.16em] text-[var(--color-muted-foreground)]">
-          {wallet.tipo === "fisica" ? "Dinheiro" : "Digital"}
-        </p>
-      </div>
-      <Input
-        type="number"
-        step="0.01"
-        value={value}
-        onChange={(event) => onChange(event.target.value)}
-        inputMode="decimal"
-      />
+        </>
+      ) : null}
+
+      {journey && showFinalizeWizard && reviewMetrics ? (
+        <FinalizeWizard
+          finalizeStep={finalizeStep}
+          journey={journey}
+          mode={mode}
+          pending={pending}
+          reviewForm={reviewForm}
+          reviewMetrics={reviewMetrics}
+          wallets={wallets}
+          onBack={() =>
+            finalizeStep === 1
+              ? mode === "edit"
+                ? router.push("/fechamentos")
+                : setShowFinalizeWizard(false)
+              : setFinalizeStep((current) => (current - 1) as FinalizeStep)
+          }
+          onConfirm={() => startTransition(handleConfirmClosure)}
+          onNext={handleFinalizeStepAdvance}
+          setReviewForm={setReviewForm}
+        />
+      ) : null}
     </div>
   );
 }
 
-function SummaryBar({ label, value, className }: { label: string; value: string; className?: string }) {
+function SimpleStateCard({ text }: { text: string }) {
   return (
-    <div className={cn("rounded-2xl bg-[rgba(6,106,81,0.12)] p-4", className)}>
-      <p className="text-xs uppercase tracking-[0.18em] text-[var(--color-muted-foreground)]">{label}</p>
-      <p className="mt-2 text-2xl font-semibold text-[var(--color-foreground)]">{value}</p>
+    <div className="theme-border surface-soft rounded-[1.5rem] border p-6 text-sm text-[var(--color-muted-foreground)]">
+      {text}
     </div>
   );
 }
 
-function ReadingRow({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="theme-border surface-soft flex min-h-24 flex-col justify-between rounded-3xl border p-4">
-      <p className="text-xs uppercase tracking-[0.18em] text-[var(--color-muted-foreground)]">{label}</p>
-      <p className="mt-3 break-words text-xl font-semibold leading-7 text-[var(--color-foreground)]">{value}</p>
-    </div>
-  );
-}
-
-function buildWalletDescription(gains: { uber: number; app99: number; other: number }) {
-  const parts = [
-    gains.uber > 0 ? `Uber ${money.format(gains.uber)}` : null,
-    gains.app99 > 0 ? `99 ${money.format(gains.app99)}` : null,
-    gains.other > 0 ? `Outros ${money.format(gains.other)}` : null,
-  ].filter(Boolean);
-
-  return parts.length > 0 ? `Fechamento do dia - ${parts.join(" | ")}` : "Fechamento do dia";
-}
-
-function formatCompactHours(minutes: number) {
-  const hours = Math.floor(minutes / 60);
-  const remainingMinutes = minutes % 60;
-  return `${hours}h ${String(remainingMinutes).padStart(2, "0")}min`;
-}
-
-function getExpenseValue(closure: DailyClosureRecord, category: DailyExpenseCategory) {
-  const amount = closure.expenses.find((entry) => entry.category === category)?.amount ?? 0;
-  return amount > 0 ? String(amount) : "";
-}
-
-function getWalletAllocationValue(closure: DailyClosureRecord | null, walletId: string) {
-  const amount = closure?.walletAllocations?.find((entry) => entry.walletId === walletId)?.amount ?? 0;
-  return amount > 0 ? String(amount) : "";
-}
-
-function sortClosuresByDateDesc(closures: DailyClosureRecord[]) {
-  return [...closures].sort((left, right) => right.date.localeCompare(left.date));
-}
-
-function getSaveDisabledReason({
-  closingDate,
-  isValidClosingDate,
-  hasExistingClosure,
-  gainsTotal,
-  useDetailedTime,
-  directWorkedHours,
-  invalidTimeRange,
-  invalidKmRange,
-  hasWalletMismatch,
-  walletsLength,
+function StartJourneyCard({
+  closureForStartDate,
+  showCheckpoints,
+  startForm,
+  setStartForm,
+  onStart,
 }: {
-  closingDate: string;
-  isValidClosingDate: boolean;
-  hasExistingClosure: boolean;
-  gainsTotal: number;
-  useDetailedTime: boolean;
-  directWorkedHours: string;
-  invalidTimeRange: boolean;
-  invalidKmRange: boolean;
-  hasWalletMismatch: boolean;
-  walletsLength: number;
+  closureForStartDate: boolean;
+  showCheckpoints: boolean;
+  startForm: { date: string; startTime: string; startKm: string };
+  setStartForm: React.Dispatch<React.SetStateAction<{ date: string; startTime: string; startKm: string }>>;
+  onStart: () => void;
 }) {
-  if (!closingDate) {
-    return "Informe a data do fechamento para liberar o salvamento.";
-  }
+  return (
+    <div className="glass-panel theme-border rounded-[2rem] border p-6 shadow-2xl shadow-black/30 lg:p-8">
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+        <div>
+          <span className="theme-border surface-soft rounded-full border px-3 py-1 text-xs uppercase tracking-[0.16em] text-[var(--color-muted-foreground)]">
+            Dia nao iniciado
+          </span>
+          <h2 className="mt-4 text-3xl font-semibold tracking-tight text-[var(--color-foreground)]">Iniciar jornada</h2>
+          <p className="mt-3 max-w-2xl text-sm leading-6 text-[var(--color-muted-foreground)]">
+            {showCheckpoints
+              ? "Comece com poucos dados. O restante pode ser alimentado ao longo do dia."
+              : "Comece com poucos dados. Ganhos, gastos e o fechamento final ficam para o momento certo."}
+          </p>
+        </div>
 
-  if (!isValidClosingDate) {
-    return "Informe uma data de fechamento valida.";
-  }
+        <Link href="/fechamentos" className="theme-border surface-soft inline-flex h-11 items-center justify-center rounded-2xl border px-4 text-sm font-medium text-[var(--color-foreground)] transition hover:bg-[var(--surface-hover)]">
+          Ver fechamentos
+        </Link>
+      </div>
 
-  if (hasExistingClosure) {
-    return "Ja existe um fechamento registrado para esta data.";
-  }
+      <div className="mt-6 grid gap-4 sm:grid-cols-3">
+        <Field label="Data" type="date" value={startForm.date} inputMode={undefined} onChange={(value) => setStartForm((current) => ({ ...current, date: value }))} />
+        <Field label="Hora inicial" type="time" value={startForm.startTime} inputMode={undefined} onChange={(value) => setStartForm((current) => ({ ...current, startTime: value }))} />
+        <Field label="KM inicial" type="number" step="0.1" value={startForm.startKm} onChange={(value) => setStartForm((current) => ({ ...current, startKm: value }))} />
+      </div>
 
-  if (gainsTotal <= 0) {
-    return "Informe pelo menos um ganho do dia para liberar o salvamento.";
-  }
+      {closureForStartDate ? <p className="mt-4 text-sm text-[var(--color-destructive)]">Ja existe um fechamento salvo para essa data.</p> : null}
 
-  if (!useDetailedTime && Number(directWorkedHours || 0) <= 0) {
-    return "Informe as horas trabalhadas do dia para liberar o salvamento.";
-  }
-
-  if (invalidTimeRange) {
-    return "Ajuste o horario para que a hora de fim seja maior que a hora de inicio.";
-  }
-
-  if (invalidKmRange) {
-    return "Ajuste o KM para que o KM final seja maior que o KM inicial.";
-  }
-
-  if (walletsLength > 0 && hasWalletMismatch) {
-    return "A soma das carteiras precisa bater com o total de ganhos do dia.";
-  }
-
-  return null;
+      <button type="button" onClick={onStart} className="home-cta-button mt-6 inline-flex h-12 items-center justify-center rounded-2xl border px-6 text-sm font-semibold transition">
+        <PlayCircle className="mr-2 h-4 w-4" />
+        Comecar jornada
+      </button>
+    </div>
+  );
 }
 
-function buildTransactionDate(dateKey: string) {
-  return new Date(`${dateKey}T12:00:00-03:00`).toISOString();
+function JourneyHeaderCard({
+  journey,
+  onFinalize,
+  showCheckpoints,
+}: {
+  journey: ActiveJourneyRecord;
+  onFinalize: () => void;
+  showCheckpoints: boolean;
+}) {
+  return (
+    <div className="glass-panel theme-border rounded-[2rem] border p-6 shadow-2xl shadow-black/30 lg:p-8">
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+        <div>
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="accent-emerald-surface rounded-full border px-3 py-1 text-xs uppercase tracking-[0.16em]">Jornada em andamento</span>
+            <span className="theme-border surface-soft rounded-full border px-3 py-1 text-xs uppercase tracking-[0.16em] text-[var(--color-muted-foreground)]">{formatDateLabel(journey.date)}</span>
+          </div>
+          <h2 className="mt-4 text-3xl font-semibold tracking-tight text-[var(--color-foreground)]">Acompanhe o dia sem burocracia</h2>
+          <p className="mt-3 max-w-2xl text-sm leading-6 text-[var(--color-muted-foreground)]">
+            {showCheckpoints
+              ? "Registre ganhos, gastos e checkpoints durante a jornada. O fechamento final fica para o ultimo passo."
+              : "Registre ganhos e gastos durante a jornada. O fechamento final fica para o ultimo passo."}
+          </p>
+          <div className="mt-4 flex flex-wrap gap-2">
+            <InfoPill icon={CalendarDays} label={formatDateLabel(journey.date)} />
+            <InfoPill icon={Clock3} label={`Inicio ${journey.startTime}`} />
+            <InfoPill icon={Route} label={`KM inicial ${formatKm(journey.startKm)}`} />
+          </div>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-3">
+          <Link href="/fechamentos" className="theme-border surface-soft inline-flex h-11 items-center justify-center rounded-2xl border px-4 text-sm font-medium text-[var(--color-foreground)] transition hover:bg-[var(--surface-hover)]">
+            Ver fechamentos
+          </Link>
+          <button type="button" onClick={onFinalize} className="home-cta-button inline-flex h-11 items-center justify-center rounded-2xl border px-5 text-sm font-semibold transition">
+            Finalizar jornada
+          </button>
+        </div>
+      </div>
+    </div>
+  );
 }
+
+function CheckpointsCard({
+  checkpoints,
+  onRemove,
+}: {
+  checkpoints: ActiveJourneyRecord["checkpoints"];
+  onRemove: (checkpointId: string) => void;
+}) {
+  return (
+    <div className="theme-border surface-soft rounded-[1.5rem] border p-6">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <p className="text-sm uppercase tracking-[0.2em] text-[var(--color-muted-foreground)]">Checkpoints</p>
+          <h3 className="mt-2 text-2xl font-semibold text-[var(--color-foreground)]">Timeline da jornada</h3>
+        </div>
+        <span className="theme-border surface-soft rounded-full border px-3 py-1 text-xs uppercase tracking-[0.16em] text-[var(--color-muted-foreground)]">
+          {checkpoints.length} {checkpoints.length === 1 ? "checkpoint" : "checkpoints"}
+        </span>
+      </div>
+
+      {checkpoints.length === 0 ? (
+        <div className="theme-border surface-soft mt-5 rounded-[1.5rem] border border-dashed p-5 text-sm leading-6 text-[var(--color-muted-foreground)]">
+          Nenhum checkpoint registrado ainda.
+        </div>
+      ) : (
+        <div className="mt-5 space-y-3">
+          {sortCheckpointsByTime(checkpoints).map((checkpoint) => (
+            <div key={checkpoint.id} className="theme-border surface-soft rounded-[1.5rem] border p-4">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                <div className="space-y-2">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="accent-emerald-surface rounded-full border px-3 py-1 text-xs uppercase tracking-[0.16em]">{checkpoint.time}</span>
+                    <span className="text-sm font-medium text-[var(--color-foreground)]">{money.format(checkpoint.accumulatedAmount)}</span>
+                  </div>
+                  <div className="flex flex-wrap gap-2 text-sm text-[var(--color-muted-foreground)]">
+                    {checkpoint.currentKm !== null ? <span>KM atual: {formatKm(checkpoint.currentKm)}</span> : null}
+                    {checkpoint.note ? <span>{checkpoint.note}</span> : null}
+                  </div>
+                </div>
+
+                <button type="button" onClick={() => onRemove(checkpoint.id)} className="theme-border surface-soft inline-flex h-10 w-10 items-center justify-center rounded-2xl border text-[var(--color-muted-foreground)] transition hover:bg-[var(--surface-hover)] hover:text-[var(--color-foreground)]">
+                  <Trash2 className="h-4 w-4" />
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function QuickActionsSection(props: {
+  activeQuickAction: QuickAction;
+  checkpointDraft: { time: string; accumulatedAmount: string; currentKm: string; note: string };
+  expenseDraft: { amount: string; category: DailyExpenseCategory };
+  gainDraft: { amount: string; category: JourneyGainCategory };
+  onAddCheckpoint: (event: React.FormEvent<HTMLFormElement>) => void;
+  onAddExpense: (event: React.FormEvent<HTMLFormElement>) => void;
+  onAddGain: (event: React.FormEvent<HTMLFormElement>) => void;
+  onFinalize: () => void;
+  onOpenQuickAction: (action: QuickAction) => void;
+  showCheckpoints: boolean;
+  setActiveQuickAction: React.Dispatch<React.SetStateAction<QuickAction>>;
+  setCheckpointDraft: React.Dispatch<React.SetStateAction<{ time: string; accumulatedAmount: string; currentKm: string; note: string }>>;
+  setExpenseDraft: React.Dispatch<React.SetStateAction<{ amount: string; category: DailyExpenseCategory }>>;
+  setGainDraft: React.Dispatch<React.SetStateAction<{ amount: string; category: JourneyGainCategory }>>;
+}) {
+  return (
+    <div className="theme-border surface-soft rounded-[1.5rem] border p-6">
+      <div className={cn("grid gap-3 sm:grid-cols-2", props.showCheckpoints ? "xl:grid-cols-4" : "xl:grid-cols-3")}>
+        <QuickActionButton title="Adicionar ganho" description="Lancar entrada rapida" icon={Coins} onClick={() => props.onOpenQuickAction("gain")} />
+        <QuickActionButton title="Adicionar gasto" description="Registrar saida do dia" icon={ReceiptText} onClick={() => props.onOpenQuickAction("expense")} />
+        {props.showCheckpoints ? (
+          <QuickActionButton title="Registrar checkpoint" description="Marcar leitura por horario" icon={Waypoints} onClick={() => props.onOpenQuickAction("checkpoint")} />
+        ) : null}
+        <QuickActionButton title="Finalizar jornada" description="Revisar e concluir" icon={ArrowRight} onClick={props.onFinalize} />
+      </div>
+
+      {props.activeQuickAction === "gain" ? (
+        <div className="theme-border surface-soft mt-5 rounded-[1.5rem] border p-5">
+          <form className="space-y-4" onSubmit={props.onAddGain}>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <Field label="Valor" type="number" step="0.01" value={props.gainDraft.amount} onChange={(value) => props.setGainDraft((current) => ({ ...current, amount: value }))} />
+              <SelectField label="Origem" value={props.gainDraft.category} onChange={(value) => props.setGainDraft((current) => ({ ...current, category: value as JourneyGainCategory }))} options={gainCategories.map((item) => ({ value: item.key, label: item.label }))} />
+            </div>
+            <div className="flex flex-col gap-3 sm:flex-row">
+              <button type="submit" className="home-cta-button inline-flex h-12 items-center justify-center rounded-2xl border px-5 text-sm font-semibold transition">Salvar ganho</button>
+              <button type="button" onClick={() => props.setActiveQuickAction(null)} className="theme-border surface-soft inline-flex h-12 items-center justify-center rounded-2xl border px-5 text-sm font-medium text-[var(--color-foreground)] transition hover:bg-[var(--surface-hover)]">Fechar</button>
+            </div>
+          </form>
+        </div>
+      ) : null}
+
+      {props.activeQuickAction === "expense" ? (
+        <div className="theme-border surface-soft mt-5 rounded-[1.5rem] border p-5">
+          <form className="space-y-4" onSubmit={props.onAddExpense}>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <Field label="Valor" type="number" step="0.01" value={props.expenseDraft.amount} onChange={(value) => props.setExpenseDraft((current) => ({ ...current, amount: value }))} />
+              <SelectField label="Categoria" value={props.expenseDraft.category} onChange={(value) => props.setExpenseDraft((current) => ({ ...current, category: value as DailyExpenseCategory }))} options={expenseCategories.map((item) => ({ value: item.key, label: item.label }))} />
+            </div>
+            <div className="flex flex-col gap-3 sm:flex-row">
+              <button type="submit" className="home-cta-button inline-flex h-12 items-center justify-center rounded-2xl border px-5 text-sm font-semibold transition">Salvar gasto</button>
+              <button type="button" onClick={() => props.setActiveQuickAction(null)} className="theme-border surface-soft inline-flex h-12 items-center justify-center rounded-2xl border px-5 text-sm font-medium text-[var(--color-foreground)] transition hover:bg-[var(--surface-hover)]">Fechar</button>
+            </div>
+          </form>
+        </div>
+      ) : null}
+
+      {props.showCheckpoints && props.activeQuickAction === "checkpoint" ? (
+        <div className="theme-border surface-soft mt-5 rounded-[1.5rem] border p-5">
+          <form className="space-y-4" onSubmit={props.onAddCheckpoint}>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <Field label="Hora" type="time" value={props.checkpointDraft.time} inputMode={undefined} onChange={(value) => props.setCheckpointDraft((current) => ({ ...current, time: value }))} />
+              <Field label="Arrecadado ate agora" type="number" step="0.01" value={props.checkpointDraft.accumulatedAmount} onChange={(value) => props.setCheckpointDraft((current) => ({ ...current, accumulatedAmount: value }))} />
+            </div>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <Field label="KM atual (opcional)" type="number" step="0.1" value={props.checkpointDraft.currentKm} onChange={(value) => props.setCheckpointDraft((current) => ({ ...current, currentKm: value }))} />
+              <TextAreaField label="Observacao (opcional)" value={props.checkpointDraft.note} onChange={(value) => props.setCheckpointDraft((current) => ({ ...current, note: value }))} placeholder="Ex.: melhorou depois do almoco" />
+            </div>
+            <div className="flex flex-col gap-3 sm:flex-row">
+              <button type="submit" className="home-cta-button inline-flex h-12 items-center justify-center rounded-2xl border px-5 text-sm font-semibold transition">Salvar checkpoint</button>
+              <button type="button" onClick={() => props.setActiveQuickAction(null)} className="theme-border surface-soft inline-flex h-12 items-center justify-center rounded-2xl border px-5 text-sm font-medium text-[var(--color-foreground)] transition hover:bg-[var(--surface-hover)]">Fechar</button>
+            </div>
+          </form>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function FinalizeWizard({
+  finalizeStep,
+  journey,
+  mode,
+  pending,
+  reviewForm,
+  reviewMetrics,
+  wallets,
+  onBack,
+  onConfirm,
+  onNext,
+  setReviewForm,
+}: {
+  finalizeStep: FinalizeStep;
+  journey: ActiveJourneyRecord;
+  mode: "create" | "edit";
+  pending: boolean;
+  reviewForm: JourneyReviewForm;
+  reviewMetrics: NonNullable<ReturnType<typeof buildReviewMetrics>>;
+  wallets: AppWallet[];
+  onBack: () => void;
+  onConfirm: () => void;
+  onNext: () => void;
+  setReviewForm: React.Dispatch<React.SetStateAction<JourneyReviewForm>>;
+}) {
+  return (
+    <div className="theme-border surface-soft rounded-[1.5rem] border p-6">
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+        <div>
+          <h3 className="text-2xl font-semibold text-[var(--color-foreground)]">Finalizar jornada</h3>
+          <p className="mt-2 text-sm leading-6 text-[var(--color-muted-foreground)]">Revise so o necessario antes de concluir o fechamento.</p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          {wizardSteps.map((step, index) => (
+            <span key={step} className={cn("theme-border rounded-full border px-3 py-1 text-xs uppercase tracking-[0.16em]", finalizeStep === index + 1 ? "accent-emerald-surface" : "surface-soft text-[var(--color-muted-foreground)]")}>
+              {index + 1}. {step}
+            </span>
+          ))}
+        </div>
+      </div>
+
+      <div className="mt-6 space-y-6">
+        {finalizeStep === 1 ? (
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Field label="Hora final" type="time" value={reviewForm.endTime} inputMode={undefined} onChange={(value) => setReviewForm((current) => ({ ...current, endTime: value }))} />
+            <Field label="KM final" type="number" step="0.1" value={reviewForm.endKm} onChange={(value) => setReviewForm((current) => ({ ...current, endKm: value }))} />
+          </div>
+        ) : null}
+
+        {finalizeStep === 2 ? (
+          <div className="space-y-6">
+            <div className="grid gap-4 md:grid-cols-3">
+              <MetricTile label="Ganhos" value={money.format(reviewMetrics.totalGains)} icon={Coins} accentClassName="accent-emerald-surface" />
+              <MetricTile label="Gastos" value={money.format(reviewMetrics.totalExpenses)} icon={ReceiptText} accentClassName="accent-amber-surface" />
+              <MetricTile label="Lucro" value={money.format(reviewMetrics.profit)} icon={CheckCircle2} accentClassName="accent-sky-surface" />
+            </div>
+
+            <div className="grid gap-6 xl:grid-cols-2">
+              <div className="space-y-4">
+                {gainCategories.map((item) => (
+                  <Field key={item.key} label={item.label} type="number" step="0.01" value={reviewForm.gains[item.key]} onChange={(value) => setReviewForm((current) => ({ ...current, gains: { ...current.gains, [item.key]: value } }))} />
+                ))}
+              </div>
+
+              <div className="space-y-4">
+                {expenseCategories.map((item) => (
+                  <Field key={item.key} label={item.label} type="number" step="0.01" value={reviewForm.expenses[item.key]} onChange={(value) => setReviewForm((current) => ({ ...current, expenses: { ...current.expenses, [item.key]: value } }))} />
+                ))}
+              </div>
+            </div>
+
+            {wallets.length > 0 ? (
+              <div className="space-y-3">
+                {wallets.map((wallet) => (
+                  <WalletRow key={wallet.id} wallet={wallet} value={reviewForm.walletAllocation[wallet.id] ?? ""} onChange={(value) => setReviewForm((current) => ({ ...current, walletAllocation: { ...current.walletAllocation, [wallet.id]: value } }))} />
+                ))}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+
+        {finalizeStep === 3 ? (
+          <div className="space-y-6">
+            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+              <MetricTile label="Horas trabalhadas" value={reviewMetrics.workedMinutes > 0 ? formatWorkedHours(reviewMetrics.workedMinutes) : "--"} icon={Timer} accentClassName="accent-emerald-surface" />
+              <MetricTile label="KM rodados" value={reviewMetrics.workedKm > 0 ? `${reviewMetrics.workedKm.toFixed(1)} km` : "--"} icon={Route} accentClassName="accent-sky-surface" />
+              <MetricTile label="Media por hora" value={reviewMetrics.hourlyAverage > 0 ? `${money.format(reviewMetrics.hourlyAverage)}/h` : "--"} icon={Coins} accentClassName="accent-amber-surface" />
+              <MetricTile label="Lucro por KM" value={reviewMetrics.profitPerKm > 0 ? `${money.format(reviewMetrics.profitPerKm)}/km` : "--"} icon={MapPinned} accentClassName="accent-sky-surface" />
+              <MetricTile label="Consumo do carro" value={reviewMetrics.consumption ? `${reviewMetrics.consumption.toFixed(1)} km/l` : "--"} icon={Fuel} accentClassName="accent-amber-surface" />
+            </div>
+
+            <div className="grid gap-4 md:grid-cols-3">
+              <Field label="Valor abastecido" type="number" step="0.01" value={reviewForm.fuelAmount} onChange={(value) => setReviewForm((current) => ({ ...current, fuelAmount: value }))} />
+              <Field label="Litros abastecidos" type="number" step="0.01" value={reviewForm.fuelLiters} onChange={(value) => setReviewForm((current) => ({ ...current, fuelLiters: value }))} />
+              <Field label="Consumo informado" type="number" step="0.1" value={reviewForm.fuelConsumption} onChange={(value) => setReviewForm((current) => ({ ...current, fuelConsumption: value }))} />
+            </div>
+          </div>
+        ) : null}
+
+        {finalizeStep === 4 ? (
+          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+            <ReadingRow label="Data" value={formatDateLabel(journey.date)} />
+            <ReadingRow label="Horario" value={`${journey.startTime} ate ${reviewForm.endTime || "--"}`} />
+            <ReadingRow label="KM" value={`${formatKm(journey.startKm)} ate ${reviewForm.endKm ? formatKm(Number(reviewForm.endKm)) : "--"}`} />
+            <ReadingRow label="Lucro do dia" value={money.format(reviewMetrics.profit)} />
+          </div>
+        ) : null}
+
+        <div className="flex flex-col gap-3 sm:flex-row sm:justify-between">
+          <button type="button" onClick={onBack} className="theme-border surface-soft inline-flex h-12 items-center justify-center rounded-2xl border px-4 text-sm font-medium text-[var(--color-foreground)] transition hover:bg-[var(--surface-hover)]">
+            {finalizeStep === 1 ? (mode === "edit" ? "Cancelar" : "Voltar para jornada") : "Voltar"}
+          </button>
+          {finalizeStep < 4 ? (
+            <button type="button" onClick={onNext} className="home-cta-button inline-flex h-12 items-center justify-center rounded-2xl border px-5 text-sm font-semibold transition">
+              Avancar
+            </button>
+          ) : (
+            <button type="button" disabled={pending} onClick={onConfirm} className="home-cta-button inline-flex h-12 items-center justify-center rounded-2xl border px-5 text-sm font-semibold transition disabled:opacity-60">
+              {pending ? "Salvando..." : mode === "edit" ? "Salvar alteracoes" : "Concluir fechamento"}
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function buildTransactionsToPersist({
+  wallets,
+  reviewForm,
+  reviewMetrics,
+  journeyDate,
+}: {
+  wallets: AppWallet[];
+  reviewForm: JourneyReviewForm;
+  reviewMetrics: NonNullable<ReturnType<typeof buildReviewMetrics>>;
+  journeyDate: string;
+}) {
+  const description = buildWalletDescription({
+    uber: reviewMetrics.gains.Uber,
+    app99: reviewMetrics.gains["99"],
+    cash: reviewMetrics.gains.Dinheiro,
+    other: reviewMetrics.gains.Outro,
+  });
+  const transactionsToPersist: Parameters<typeof addTransactionAction>[0][] = [];
+
+  if (wallets.length > 0 && reviewMetrics.totalGains > 0) {
+    for (const wallet of wallets) {
+      const amount = Number(reviewForm.walletAllocation[wallet.id] || 0);
+      if (amount <= 0) {
+        continue;
+      }
+
+      transactionsToPersist.push({
+        data: buildTransactionDate(journeyDate),
+        valor: amount,
+        tipo: "ganho",
+        app: "Outro",
+        formaPagamento: wallet.tipo === "fisica" ? "dinheiro" : "digital",
+        categoria: "Fechamento do dia",
+        descricao: description,
+        walletId: wallet.id,
+      });
+    }
+  } else if (reviewMetrics.totalGains > 0) {
+    transactionsToPersist.push({
+      data: buildTransactionDate(journeyDate),
+      valor: reviewMetrics.totalGains,
+      tipo: "ganho",
+      app: "Outro",
+      formaPagamento: "digital",
+      categoria: "Fechamento do dia",
+      descricao: description,
+    });
+  }
+
+  transactionsToPersist.push(
+    ...reviewMetrics.expenseEntries.map((entry) => ({
+      data: buildTransactionDate(journeyDate),
+      valor: entry.amount,
+      tipo: "gasto" as const,
+      app: "Outro" as const,
+      formaPagamento: "dinheiro" as const,
+      categoria: entry.category,
+      descricao: "Fechamento do dia",
+    })),
+  );
+
+  return transactionsToPersist;
+}
+
+function buildClosureFromReview({
+  journey,
+  reviewForm,
+  reviewMetrics,
+  initialClosure,
+}: {
+  journey: ActiveJourneyRecord;
+  reviewForm: JourneyReviewForm;
+  reviewMetrics: NonNullable<ReturnType<typeof buildReviewMetrics>>;
+  initialClosure: DailyClosureRecord | null;
+}) {
+  return {
+    id: initialClosure?.id ?? createLocalId(`closure-${journey.date}`),
+    date: journey.date,
+    uberAmount: reviewMetrics.gains.Uber,
+    app99Amount: reviewMetrics.gains["99"],
+    otherAmount: reviewMetrics.gains.Dinheiro + reviewMetrics.gains.Outro,
+    expenses: reviewMetrics.expenseEntries.map((entry) => ({
+      id: createLocalId(`expense-${entry.category}`),
+      category: entry.category,
+      amount: entry.amount,
+    })),
+    startTime: journey.startTime,
+    endTime: reviewForm.endTime,
+    startKm: journey.startKm,
+    endKm: Number(reviewForm.endKm || 0),
+    fuelAmount: reviewMetrics.fuelAmount,
+    fuelLiters: reviewMetrics.fuelLiters,
+    totalGains: reviewMetrics.totalGains,
+    totalExpenses: reviewMetrics.totalExpenses,
+    workedMinutes: reviewMetrics.workedMinutes,
+    workedKm: reviewMetrics.workedKm,
+    fuelConsumption: reviewMetrics.consumption,
+    hourlyAverage: reviewMetrics.hourlyAverage,
+    walletAllocations: reviewMetrics.walletAllocations,
+  };
+}
+
+// HELPERS_MARKER

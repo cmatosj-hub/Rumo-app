@@ -49,9 +49,8 @@ export async function updateSession(request: NextRequest) {
 
   // Keep this auth call immediately after client creation so the SSR session
   // stays refreshed and predictable across page loads.
-  const {
-    data: { claims },
-  } = await supabase.auth.getClaims();
+  const { data } = await supabase.auth.getClaims();
+  const claims = data?.claims;
 
   if (claims && AUTH_ENTRY_ROUTES.has(request.nextUrl.pathname)) {
     const redirectUrl = request.nextUrl.clone();

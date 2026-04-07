@@ -18,8 +18,18 @@ export function ClosureEditClient({
   settings: SettingsRecord;
   wallets: Wallet[];
 }) {
-  const { store } = useDriverJournal();
+  const { store, loaded } = useDriverJournal();
   const closure = useMemo(() => store.closures.find((item) => item.date === date) ?? null, [date, store.closures]);
+
+  if (!loaded) {
+    return (
+      <Card>
+        <CardContent className="p-6">
+          <p className="text-sm text-[var(--color-muted-foreground)]">Carregando fechamento...</p>
+        </CardContent>
+      </Card>
+    );
+  }
 
   if (!closure) {
     return (

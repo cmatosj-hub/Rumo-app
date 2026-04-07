@@ -22,6 +22,7 @@ export function useDriverJournal() {
 
       const parsed = JSON.parse(raw) as Partial<DriverJournalStore>;
       setStore({
+        activeJourney: parsed.activeJourney ?? null,
         closures: parsed.closures ?? [],
         fuelEntries: parsed.fuelEntries ?? [],
         maintenanceEntries: parsed.maintenanceEntries ?? [],

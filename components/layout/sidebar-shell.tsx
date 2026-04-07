@@ -9,10 +9,10 @@ export async function SidebarShell({ children }: { children: React.ReactNode }) 
 
   return (
     <main className="mx-auto min-h-screen max-w-7xl px-4 py-4 sm:px-6 lg:px-8">
-      <div className="grid gap-4 lg:grid-cols-[300px_minmax(0,1fr)]">
+      <div className="shell-layout">
         <ShellSidebar profile={current.profile} />
 
-        <section className="glass-panel theme-border rounded-[2rem] border p-6 shadow-2xl shadow-black/30 lg:p-8">
+        <section className="glass-panel theme-border min-w-0 rounded-[2rem] border p-6 shadow-2xl shadow-black/30 lg:p-8">
           {children}
         </section>
       </div>
